@@ -44,3 +44,35 @@ def event_day(index: pd.DatetimeIndex, date: str | pd.Timestamp) -> pd.Timestamp
             f"{stamp.date()} is after the last available date ({index[-1].date()})"
         )
     return later[0]
+
+
+# ---------------------------------------------------------------- congress
+
+CONGRESS_ERAS: tuple[str, ...] = ("1990s", "2000s", "2010s", "2020s")
+MENTIONS_YEARS: range = range(1990, 2025)
+SENATOR_YEARS: range = range(2010, 2025)
+
+# One regex per notebook term. Possessives count ("China's" is a mention of
+# China); adjectival forms do not ("Chinese" is a different word, and counting
+# it would quietly change what the y-axis means). Plurals count only where the
+# plural is the same concept ("tariffs").
+TERM_VARIANTS: dict[str, str] = {
+    "china": r"\bchina(?:'s)?\b",
+    "japan": r"\bjapan(?:'s)?\b",
+    "russia": r"\brussia(?:'s)?\b",
+    "taiwan": r"\btaiwan(?:'s)?\b",
+    "tariff": r"\btariffs?\b",
+    "trade": r"\btrade\b",
+    "terrorism": r"\bterrorism\b",
+    "climate": r"\bclimate\b",
+}
+
+# GovInfo bulk paths. No API key, no rate limit metering. Note the prefix split:
+# metadata under /metadata/pkg/, document text under /content/pkg/.
+GOVINFO_MODS_URL: str = "https://www.govinfo.gov/metadata/pkg/{pkg}/mods.xml"
+GOVINFO_HTML_URL: str = "https://www.govinfo.gov/content/pkg/{pkg}/html/{granule}.htm"
+GOVINFO_SITEMAP_URL: str = "https://www.govinfo.gov/sitemap/CREC_{year}_sitemap.xml"
+USER_AGENT: str = "twl-intern-notebooks-research"
+
+CONGRESS_RAW_GOVINFO: Path = RAW_DIR / "congress_govinfo"
+CONGRESS_RAW_GENTZKOW: Path = RAW_DIR / "congress_gentzkow"

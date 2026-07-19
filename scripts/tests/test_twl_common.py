@@ -1,7 +1,19 @@
+import re
+
 import pandas as pd
 import pytest
 
-from twl_common import EVENT_DATES, EXPECTED_TICKERS, event_day
+from twl_common import (
+    CONGRESS_ERAS,
+    EVENT_DATES,
+    EXPECTED_TICKERS,
+    GOVINFO_HTML_URL,
+    GOVINFO_MODS_URL,
+    MENTIONS_YEARS,
+    SENATOR_YEARS,
+    TERM_VARIANTS,
+    event_day,
+)
 
 
 def test_event_day_returns_exact_match_when_date_is_a_trading_day():
@@ -39,3 +51,37 @@ def test_event_dates_are_the_six_announcement_dates():
         "2019-08-23",
         "2020-01-15",
     )
+
+
+def test_term_variants_cover_the_eight_notebook_terms():
+    assert set(TERM_VARIANTS) == {
+        "china", "climate", "japan", "russia",
+        "taiwan", "tariff", "terrorism", "trade",
+    }
+    assert all(t == t.lower() for t in TERM_VARIANTS)
+
+
+def test_term_variants_are_compilable_word_boundary_patterns():
+    for term, pattern in TERM_VARIANTS.items():
+        rx = re.compile(pattern)
+        assert rx.search(term), f"{term} pattern does not match its own name"
+
+
+def test_year_spans_match_the_notebook():
+    assert list(MENTIONS_YEARS) == list(range(1990, 2025))
+    assert list(SENATOR_YEARS) == list(range(2010, 2025))
+    assert CONGRESS_ERAS == ("1990s", "2000s", "2010s", "2020s")
+
+
+def test_govinfo_urls_use_the_keyless_bulk_paths():
+    mods = GOVINFO_MODS_URL.format(pkg="CREC-2023-06-14")
+    html = GOVINFO_HTML_URL.format(pkg="CREC-2023-06-14", granule="CREC-2023-06-14-pt1-PgS2079-8")
+    assert mods == "https://www.govinfo.gov/metadata/pkg/CREC-2023-06-14/mods.xml"
+    assert html == (
+        "https://www.govinfo.gov/content/pkg/CREC-2023-06-14/html/"
+        "CREC-2023-06-14-pt1-PgS2079-8.htm"
+    )
+    assert "api_key" not in mods and "api_key" not in html
+    # MODS lives under /metadata/, text under /content/. Swapping them 404s.
+    assert "/metadata/pkg/" in mods
+    assert "/content/pkg/" in html
