@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -50,6 +51,12 @@ MAX_RECORDS = 250
 # initial attempt, this is a maximum of 5 attempts per cell.
 RETRY_DELAYS: tuple[float, ...] = (20.0, 40.0, 80.0, 160.0)
 MAX_ATTEMPTS: int = 5
+
+assert len(RETRY_DELAYS) == MAX_ATTEMPTS - 1, (
+    "RETRY_DELAYS must have exactly MAX_ATTEMPTS - 1 entries (one delay between "
+    "each pair of attempts); raising MAX_ATTEMPTS without extending RETRY_DELAYS "
+    "would IndexError at runtime in fetch_one"
+)
 
 # Order matters: it becomes CSV row order, and the notebook relies on
 # unique()[2] == "Phase One deal".
@@ -141,9 +148,22 @@ def _load_json(path: Path) -> dict:
     return {}
 
 
+def _atomic_write_text(path: Path, content: str) -> None:
+    """Write `content` to `path` without ever leaving a truncated/partial file.
+
+    Writes to a sibling temp file first, then swaps it into place with
+    os.replace, which is atomic on both POSIX and Windows. A crash or
+    interruption mid-write leaves either the old file (untouched) or the new
+    one -- never a half-written file at `path`.
+    """
+    tmp_path = path.with_name(path.name + ".tmp")
+    tmp_path.write_text(content, encoding="utf-8")
+    os.replace(tmp_path, path)
+
+
 def _write_cache(data: dict, status: dict) -> None:
-    RAW_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-    STATUS_PATH.write_text(json.dumps(status, indent=2, ensure_ascii=False), encoding="utf-8")
+    _atomic_write_text(RAW_PATH, json.dumps(data, indent=2, ensure_ascii=False))
+    _atomic_write_text(STATUS_PATH, json.dumps(status, indent=2, ensure_ascii=False))
 
 
 def fetch_all(
@@ -156,7 +176,11 @@ def fetch_all(
     """Fetch missing/errored cells, merging into `data`/`status` in place.
 
     A cell whose status is already "ok" (and refresh is False) is skipped
-    entirely -- fetch_one is not called and its cached value is untouched.
+    entirely -- fetch_one is not called and its cached value is untouched --
+    but only if that cached data actually exists. A cell marked "ok" with no
+    matching entry in `data` (e.g. from a desynced dual-file write) is not
+    trusted and is re-fetched instead, so a broken cache can self-heal on
+    the next resume rather than silently skipping forever.
 
     `status` describes the trustworthiness of the CACHED data, not the
     outcome of the most recent fetch attempt. If an attempt fails but the
@@ -174,7 +198,7 @@ def fetch_all(
         status.setdefault(event, {})
         for outlet in outlets:
             cell_status = status[event].get(outlet)
-            if not refresh and cell_status == "ok":
+            if not refresh and cell_status == "ok" and outlet in data[event]:
                 cached_n = len(data[event].get(outlet, []))
                 print(f"  {event} / {outlet} ... skip (cached ok, {cached_n})")
                 continue

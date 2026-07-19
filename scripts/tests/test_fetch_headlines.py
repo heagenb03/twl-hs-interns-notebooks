@@ -210,6 +210,118 @@ def test_fetch_all_failed_attempt_with_no_prior_data_records_error(monkeypatch):
     assert new_status[event][outlet] == "error: 429 Too Many Requests"
 
 
+def test_fetch_all_refresh_true_refetches_ok_cell(monkeypatch):
+    """Finding 1: --refresh must force a real re-fetch, even for cells
+
+    already marked "ok" with cached data. If `refresh=True` were ignored (or
+    the `not refresh` check inverted), this cell would be skipped and the
+    stale cached article would survive untouched.
+    """
+    event = "Test Event"
+    outlet = "NYT"
+    events = ((event, "2020-01-01", "2020-01-02"),)
+    outlets = (outlet,)
+    data = {event: {outlet: [{"title": "stale-old-article"}]}}
+    status = {event: {outlet: "ok"}}
+
+    calls: list[str] = []
+
+    def fake_fetch_one(outlet_arg: str, _start: str, _end: str) -> list[dict]:
+        calls.append(outlet_arg)
+        return [{"title": "fresh-new-article"}]
+
+    monkeypatch.setattr(fh, "fetch_one", fake_fetch_one)
+    monkeypatch.setattr(fh.time, "sleep", lambda s: None)
+    monkeypatch.setattr(fh, "_write_cache", lambda d, s: None)
+
+    new_data, new_status = fh.fetch_all(data, status, refresh=True, events=events, outlets=outlets)
+
+    assert calls == [outlet], "fetch_one must be called for an ok cell when refresh=True"
+    assert new_data[event][outlet] == [{"title": "fresh-new-article"}]
+    assert new_status[event][outlet] == "ok"
+
+
+def test_fetch_all_writes_cache_incrementally_across_events(monkeypatch, tmp_path):
+    """Finding 2: _write_cache (the real implementation, not a no-op) must be
+
+    called after each event completes, not just once at the very end. We
+    inject a failure between event 1 and event 2 (via time.sleep, which is
+    called unconditionally after each cell and is not swallowed by the
+    per-cell try/except) and assert that event 1's results are already
+    durable on disk before the run is interrupted.
+    """
+    event1, event2 = "Event One", "Event Two"
+    outlet = "NYT"
+    events = (
+        (event1, "2020-01-01", "2020-01-02"),
+        (event2, "2020-02-01", "2020-02-02"),
+    )
+    outlets = (outlet,)
+    data: dict = {}
+    status: dict = {}
+
+    raw_path = tmp_path / "headlines_gdelt.json"
+    status_path = tmp_path / "headlines_gdelt_status.json"
+    monkeypatch.setattr(fh, "RAW_PATH", raw_path)
+    monkeypatch.setattr(fh, "STATUS_PATH", status_path)
+
+    def fake_fetch_one(_outlet: str, start: str, _end: str) -> list[dict]:
+        return [{"title": f"article-for-{start}"}]
+
+    monkeypatch.setattr(fh, "fetch_one", fake_fetch_one)
+
+    sleep_calls: list[float] = []
+
+    def fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+        if len(sleep_calls) == 2:
+            raise RuntimeError("simulated interruption before second event's write")
+
+    monkeypatch.setattr(fh.time, "sleep", fake_sleep)
+
+    with pytest.raises(RuntimeError, match="simulated interruption"):
+        fh.fetch_all(data, status, refresh=False, events=events, outlets=outlets)
+
+    assert raw_path.exists(), "cache file should already be on disk after event 1's write"
+    on_disk_data = json.loads(raw_path.read_text(encoding="utf-8"))
+    on_disk_status = json.loads(status_path.read_text(encoding="utf-8"))
+
+    assert on_disk_data[event1][outlet] == [{"title": "article-for-2020-01-01"}]
+    assert on_disk_status[event1][outlet] == "ok"
+    # The interruption happened before event 2's write, so it must not be on disk.
+    assert event2 not in on_disk_data
+
+
+def test_fetch_all_ok_status_without_data_is_refetched_not_skipped(monkeypatch):
+    """Finding 3 (skip-check half): a cell marked "ok" but with no matching
+
+    data (e.g. from a desynced dual-file write) must be re-fetched, not
+    trusted and skipped forever.
+    """
+    event = "Test Event"
+    outlet = "NYT"
+    events = ((event, "2020-01-01", "2020-01-02"),)
+    outlets = (outlet,)
+    data = {event: {}}  # no data for outlet despite "ok" status below
+    status = {event: {outlet: "ok"}}
+
+    calls: list[str] = []
+
+    def fake_fetch_one(outlet_arg: str, _start: str, _end: str) -> list[dict]:
+        calls.append(outlet_arg)
+        return [{"title": "recovered-article"}]
+
+    monkeypatch.setattr(fh, "fetch_one", fake_fetch_one)
+    monkeypatch.setattr(fh.time, "sleep", lambda s: None)
+    monkeypatch.setattr(fh, "_write_cache", lambda d, s: None)
+
+    new_data, new_status = fh.fetch_all(data, status, refresh=False, events=events, outlets=outlets)
+
+    assert calls == [outlet], "fetch_one must be called when status says ok but data is missing"
+    assert new_data[event][outlet] == [{"title": "recovered-article"}]
+    assert new_status[event][outlet] == "ok"
+
+
 def test_main_returns_1_when_any_cell_ends_in_error_status(monkeypatch, tmp_path):
     monkeypatch.setattr(sys, "argv", ["fetch_headlines.py"])
     monkeypatch.setattr(fh, "RAW_DIR", tmp_path)
