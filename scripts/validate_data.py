@@ -27,6 +27,13 @@ def validate_tariff(df: pd.DataFrame) -> list[str]:
     if extra:
         problems.append(f"unexpected ticker column(s): {', '.join(extra)}")
 
+    for tk in [t for t in EXPECTED_TICKERS if t in df.columns]:
+        n_null = int(df[tk].isna().sum())
+        if n_null:
+            problems.append(f"{tk} has {n_null} null price(s)")
+        if (df[tk].dropna() <= 0).any():
+            problems.append(f"{tk} has non-positive price(s)")
+
     if not isinstance(df.index, pd.DatetimeIndex):
         problems.append("index is not a DatetimeIndex")
         return problems
@@ -37,19 +44,19 @@ def validate_tariff(df: pd.DataFrame) -> list[str]:
         dupes = df.index[df.index.duplicated()].unique()
         problems.append(f"duplicate dates: {', '.join(str(d.date()) for d in dupes)}")
 
-    for tk in [t for t in EXPECTED_TICKERS if t in df.columns]:
-        n_null = int(df[tk].isna().sum())
-        if n_null:
-            problems.append(f"{tk} has {n_null} null price(s)")
-        if (df[tk].dropna() <= 0).any():
-            problems.append(f"{tk} has non-positive price(s)")
-
     for date in EVENT_DATES:
         stamp = pd.Timestamp(date)
         if stamp not in df.index:
             problems.append(f"event date {date} is not a row in the index")
             continue
-        if df.index.get_loc(stamp) == 0:
+        # get_indexer_for returns EVERY position matching `stamp` and works
+        # regardless of whether the index is unique/monotonic (get_loc does
+        # not: on a duplicated, non-monotonic index it can return an ndarray,
+        # and on a duplicated monotonic index it returns a slice — neither
+        # compares safely against an int). The event has no preceding row
+        # iff its earliest occurrence sits at position 0.
+        positions = df.index.get_indexer_for([stamp])
+        if positions.min() == 0:
             problems.append(
                 f"event date {date} has no preceding row; the notebook rebases "
                 "on iloc[i-1] and would silently wrap to the last row"
