@@ -66,7 +66,7 @@ def _blockquotes(nb: dict[str, Any]) -> list[str]:
 
 def _headers(nb: dict[str, Any]) -> list[str]:
     return [
-        EMOJI_RE.sub("", line).strip()
+        " ".join(EMOJI_RE.sub("", line).split())
         for line in _markdown(nb).split("\n")
         if line.startswith("#")
     ]

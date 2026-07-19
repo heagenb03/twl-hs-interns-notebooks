@@ -2,3 +2,4 @@
 .wolf/
 docs/
 CLAUDE.md
+__pycache__/
