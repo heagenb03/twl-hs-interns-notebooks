@@ -1,1 +1,6 @@
 scripts/
+
+.claude/
+.wolf
+docs/
+CLAUDE.md
