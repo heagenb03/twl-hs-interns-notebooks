@@ -3,3 +3,4 @@
 docs/
 CLAUDE.md
 data/_raw/
+__pycache__/
