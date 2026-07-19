@@ -1,0 +1,68 @@
+{
+  "session_id": "session-2026-07-19-1023",
+  "started": "2026-07-19T15:23:44.743Z",
+  "files_read": {
+    "C:/Users/heage/.claude/projects/C--Users-heage-OneDrive-Research-TWL-highschool-intern-twl-hs-interns-notebooks/e0dcd3e1-a517-4a7a-b08a-3082825f58de/tool-results/webfetch-1784474946462-zq78w0.pdf": {
+      "count": 1,
+      "tokens": 0,
+      "first_read": "2026-07-19T15:33:28.613Z"
+    },
+    "C:/Users/heage/OneDrive/Research/TWL/highschool_intern/twl-hs-interns-notebooks/scripts/make_data_media.py": {
+      "count": 1,
+      "tokens": 1721,
+      "first_read": "2026-07-19T15:33:45.922Z"
+    },
+    "C:/Users/heage/OneDrive/Research/TWL/highschool_intern/twl-hs-interns-notebooks/scripts/make_data_tariff.py": {
+      "count": 1,
+      "tokens": 604,
+      "first_read": "2026-07-19T15:33:57.530Z"
+    },
+    "C:/Users/heage/OneDrive/Research/TWL/highschool_intern/twl-hs-interns-notebooks/scripts/make_data_congress.py": {
+      "count": 1,
+      "tokens": 1148,
+      "first_read": "2026-07-19T15:33:58.007Z"
+    },
+    "C:/Users/heage/OneDrive/Research/TWL/highschool_intern/twl-hs-interns-notebooks/media_framing.ipynb": {
+      "count": 2,
+      "tokens": 0,
+      "first_read": "2026-07-19T15:33:58.520Z"
+    },
+    "C:/Users/heage/OneDrive/Research/TWL/highschool_intern/twl-hs-interns-notebooks/tariff_event_study.ipynb": {
+      "count": 1,
+      "tokens": 0,
+      "first_read": "2026-07-19T15:34:07.115Z"
+    },
+    "C:/Users/heage/OneDrive/Research/TWL/highschool_intern/twl-hs-interns-notebooks/notebooks/media_framing.ipynb": {
+      "count": 1,
+      "tokens": 5361,
+      "first_read": "2026-07-19T15:34:22.902Z"
+    },
+    "C:/Users/heage/OneDrive/Research/TWL/highschool_intern/twl-hs-interns-notebooks/notebooks/tariff_event_study.ipynb": {
+      "count": 1,
+      "tokens": 5176,
+      "first_read": "2026-07-19T15:34:23.829Z"
+    },
+    "C:/Users/heage/OneDrive/Research/TWL/highschool_intern/twl-hs-interns-notebooks/notebooks/congress_mentions.ipynb": {
+      "count": 1,
+      "tokens": 4821,
+      "first_read": "2026-07-19T15:34:24.117Z"
+    },
+    "C:/Users/heage/AppData/Local/Temp/claude/C--Users-heage-OneDrive-Research-TWL-highschool-intern-twl-hs-interns-notebooks/e0dcd3e1-a517-4a7a-b08a-3082825f58de/tasks/bc937b3jh.output": {
+      "count": 2,
+      "tokens": 0,
+      "first_read": "2026-07-19T15:36:05.734Z"
+    },
+    "C:/Users/heage/AppData/Local/Temp/claude/C--Users-heage-OneDrive-Research-TWL-highschool-intern-twl-hs-interns-notebooks/e0dcd3e1-a517-4a7a-b08a-3082825f58de/tasks/bvtfw0ggn.output": {
+      "count": 1,
+      "tokens": 0,
+      "first_read": "2026-07-19T15:37:28.036Z"
+    }
+  },
+  "files_written": [],
+  "edit_counts": {},
+  "anatomy_hits": 6,
+  "anatomy_misses": 5,
+  "repeated_reads_warned": 2,
+  "cerebrum_warnings": 0,
+  "stop_count": 2
+}

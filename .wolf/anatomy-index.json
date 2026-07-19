@@ -1,0 +1,245 @@
+{
+  "version": 1,
+  "meta": {
+    "lastScanned": "2026-07-19T14:59:01.700Z",
+    "fileCount": 23,
+    "hits": 0,
+    "misses": 0,
+    "renderedHash": "2ba1c575c4c078a1646d65a04745b96b0c2621fa6a5fd37ee1678d259bfc583e",
+    "storeUpdatedAt": "2026-07-19T14:59:01.701Z"
+  },
+  "files": {
+    ".claude/commands/reframe.md": {
+      "description": "Mode: migrate [framework]",
+      "tokens": 551,
+      "hash": "17a75695be5d4629",
+      "size": 2221,
+      "mtimeMs": 1784473141647.527,
+      "updatedAt": "2026-07-19T14:59:01.658Z",
+      "source": "scan"
+    },
+    ".claude/commands/security-audit.md": {
+      "description": "Layer 1 — Dependencies",
+      "tokens": 510,
+      "hash": "e6f7e0b7337c9c86",
+      "size": 2060,
+      "mtimeMs": 1784473141646.529,
+      "updatedAt": "2026-07-19T14:59:01.658Z",
+      "source": "scan"
+    },
+    ".claude/rules/openwolf.md": {
+      "description": "",
+      "tokens": 328,
+      "hash": "6d735b2c1c54a916",
+      "size": 1323,
+      "mtimeMs": 1784473141441.6333,
+      "updatedAt": "2026-07-19T14:59:01.660Z",
+      "source": "scan"
+    },
+    ".claude/settings.json": {
+      "description": "",
+      "tokens": 514,
+      "hash": "f68759bb50af5ee4",
+      "size": 1799,
+      "mtimeMs": 1784473141424.4656,
+      "updatedAt": "2026-07-19T14:59:01.675Z",
+      "source": "scan"
+    },
+    ".cursor/rules/openwolf.mdc": {
+      "description": "",
+      "tokens": 87,
+      "hash": "25a895da2047ef4d",
+      "size": 323,
+      "mtimeMs": 1784473141644.5918,
+      "updatedAt": "2026-07-19T14:59:01.676Z",
+      "source": "scan"
+    },
+    ".gitignore": {
+      "description": "Git ignore rules",
+      "tokens": 3,
+      "hash": "bed219d313af6e29",
+      "size": 10,
+      "mtimeMs": 1783042733145.3582,
+      "updatedAt": "2026-07-19T14:59:01.676Z",
+      "source": "scan"
+    },
+    "CLAUDE.md": {
+      "description": "OpenWolf",
+      "tokens": 57,
+      "hash": "b1ca356fa9d5f3a6",
+      "size": 225,
+      "mtimeMs": 1784473141441.9675,
+      "updatedAt": "2026-07-19T14:59:01.678Z",
+      "source": "scan"
+    },
+    "data/bills_china.csv": {
+      "description": "",
+      "tokens": 3803,
+      "hash": "7b9ed5b5dd9b4b83",
+      "size": 14259,
+      "mtimeMs": 1783042859000.132,
+      "updatedAt": "2026-07-19T14:59:01.679Z",
+      "source": "scan"
+    },
+    "data/congress_companions.csv": {
+      "description": "",
+      "tokens": 224,
+      "hash": "c41ef1a7ba17fa83",
+      "size": 838,
+      "mtimeMs": 1783076112718.0054,
+      "updatedAt": "2026-07-19T14:59:01.680Z",
+      "source": "scan"
+    },
+    "data/congress_mentions.csv": {
+      "description": "",
+      "tokens": 1185,
+      "hash": "ce8ed3616fb8f6da",
+      "size": 4443,
+      "mtimeMs": 1783076106727.761,
+      "updatedAt": "2026-07-19T14:59:01.682Z",
+      "source": "scan"
+    },
+    "data/congress_senators.csv": {
+      "description": "",
+      "tokens": 607,
+      "hash": "5c6688bbfdbba7b4",
+      "size": 2274,
+      "mtimeMs": 1783076117450.0552,
+      "updatedAt": "2026-07-19T14:59:01.683Z",
+      "source": "scan"
+    },
+    "data/headlines.csv": {
+      "description": "",
+      "tokens": 1627,
+      "hash": "13933499860f50e5",
+      "size": 6102,
+      "mtimeMs": 1783076126464.3823,
+      "updatedAt": "2026-07-19T14:59:01.684Z",
+      "source": "scan"
+    },
+    "data/tariff_prices.csv": {
+      "description": "",
+      "tokens": 11807,
+      "hash": "747852ca8c6f2c1d",
+      "size": 44274,
+      "mtimeMs": 1783076121602.9983,
+      "updatedAt": "2026-07-19T14:59:01.685Z",
+      "source": "scan"
+    },
+    "notebooks/bill_classifier.ipynb": {
+      "description": "",
+      "tokens": 7262,
+      "hash": "8c6db4793626123e",
+      "size": 27490,
+      "mtimeMs": 1783076100243.4827,
+      "updatedAt": "2026-07-19T14:59:01.687Z",
+      "source": "scan"
+    },
+    "notebooks/congress_mentions.ipynb": {
+      "description": "",
+      "tokens": 4821,
+      "hash": "d95d0380c171ce08",
+      "size": 18269,
+      "mtimeMs": 1783076083571.7258,
+      "updatedAt": "2026-07-19T14:59:01.688Z",
+      "source": "scan"
+    },
+    "notebooks/media_framing.ipynb": {
+      "description": "",
+      "tokens": 5361,
+      "hash": "fc7f58feeb0095db",
+      "size": 20333,
+      "mtimeMs": 1783076093991.1675,
+      "updatedAt": "2026-07-19T14:59:01.689Z",
+      "source": "scan"
+    },
+    "notebooks/tariff_event_study.ipynb": {
+      "description": "",
+      "tokens": 5176,
+      "hash": "acfc2cbc7a9bb30e",
+      "size": 19601,
+      "mtimeMs": 1783076088269.821,
+      "updatedAt": "2026-07-19T14:59:01.690Z",
+      "source": "scan"
+    },
+    "README_week1_notebooks.md": {
+      "description": "Week 1 Notebooks — Full Handoff",
+      "tokens": 1259,
+      "hash": "ffacfae5d88de236",
+      "size": 5093,
+      "mtimeMs": 1783076070935.3628,
+      "updatedAt": "2026-07-19T14:59:01.691Z",
+      "source": "scan"
+    },
+    "README.md": {
+      "description": "Project documentation",
+      "tokens": 20,
+      "hash": "19ec839d49336cce",
+      "size": 79,
+      "mtimeMs": 1783042527851.3337,
+      "updatedAt": "2026-07-19T14:59:01.692Z",
+      "source": "scan"
+    },
+    "scripts/make_data_congress.py": {
+      "description": "Placeholder data for the Congressional Record notebook. Three CSVs.",
+      "tokens": 1148,
+      "hash": "0d0cfa58a13d5150",
+      "size": 4017,
+      "mtimeMs": 1783076134542.7312,
+      "updatedAt": "2026-07-19T14:59:01.693Z",
+      "source": "scan",
+      "symbols": [
+        {
+          "name": "curve",
+          "kind": "fn",
+          "startLine": 10,
+          "endLine": 51,
+          "tokens": 683
+        },
+        {
+          "name": "sen",
+          "kind": "fn",
+          "startLine": 52,
+          "endLine": 82,
+          "tokens": 372
+        }
+      ]
+    },
+    "scripts/make_data_media.py": {
+      "description": "Synthetic headlines in the STYLE of four outlets across six US-China events.",
+      "tokens": 1721,
+      "hash": "8f0fa9a040924f29",
+      "size": 6025,
+      "mtimeMs": 1783076142928.4014,
+      "updatedAt": "2026-07-19T14:59:01.694Z",
+      "source": "scan",
+      "symbols": [
+        {
+          "name": "add",
+          "kind": "fn",
+          "startLine": 8,
+          "endLine": 123,
+          "tokens": 1626
+        }
+      ]
+    },
+    "scripts/make_data_tariff.py": {
+      "description": "Placeholder daily prices for the tariff event-study notebook.",
+      "tokens": 604,
+      "hash": "7b8f70d110a5a831",
+      "size": 2112,
+      "mtimeMs": 1783076139396.9487,
+      "updatedAt": "2026-07-19T14:59:01.695Z",
+      "source": "scan"
+    },
+    "scripts/make_data.py": {
+      "description": "Generate placeholder congressional bill snippets for the Week 1 bill classifier notebook.",
+      "tokens": 4547,
+      "hash": "dcba3601994feb5a",
+      "size": 15913,
+      "mtimeMs": 1783042873240.467,
+      "updatedAt": "2026-07-19T14:59:01.696Z",
+      "source": "scan"
+    }
+  }
+}
