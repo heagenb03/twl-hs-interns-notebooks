@@ -19,7 +19,7 @@ These apply to **every** task. Violating any one is a failed task.
 - **Never invent a number.** No numeric literal may appear after editing that was not present before. Removing a number by deleting a whole redundant sentence is allowed; changing one is not.
 - **Never add or remove cells.** Cell count, order, and `cell_type` sequence are fixed.
 - **Never hand-edit `.ipynb` with the Edit tool.** Use the `read_nb` / `write_nb` helpers from Task 1. JSON string escaping is error-prone and these files contain emoji.
-- **Exact serialization:** `json.dumps(nb, indent=1, ensure_ascii=False) + "\n"`, written with `newline="\r\n"`. The working tree is CRLF (`core.autocrlf=true`); the git blob is LF. Verified byte-identical against `notebooks/bill_classifier.ipynb`.
+- **Exact serialization:** `json.dumps(nb, indent=1, ensure_ascii=False) + "\n"`, written with `newline="\r\n"`. The working tree is CRLF (`core.autocrlf=true`); the git blob is LF. Verified byte-identical during planning against **all four** notebooks (28144 / 18714 / 20840 / 20071 bytes). Task 1 Step 2 re-proves this before any editing.
 - **Encoding:** always pass `encoding="utf-8"` explicitly, and set `PYTHONIOENCODING=utf-8` before any command that prints notebook text. Windows defaults to cp1252 and crashes on the emoji.
 - **Do not touch:** `data/*.csv`, the `YOUR-ORG` URL placeholder, any anchor value, the repeated "Step zero" / "How this notebook works" intro blocks, `## ` section structure, "Things to try" ladder numbering, Week 2 bridge paragraphs, "Before you close" prompts.
 
@@ -28,7 +28,17 @@ These apply to **every** task. Violating any one is a failed task.
 1. `sit with` / `sitting with`
 2. `in one breath` / `in one sitting`
 3. Rhetorical setups: `Now the fun part`, `Here's a fair question`, `Now the trap`, `Forget positive/negative`, and the fake self-correction in tariff Beat 3
-4. `Welcome!` openers, and emoji in `#` / `##` headers
+4. `Welcome!` openers, and **decorative** emoji in `#` / `##` headers
+
+**The emoji rule, stated explicitly** — the checker cannot enforce this (its header
+guard strips all emoji before comparing, so it is deliberately blind to the
+distinction). The words are the only specification:
+
+- **Remove** decorative emoji: `🏛️` `📰🔍` `📉⚡` `🏛️📈` `🧠` `🔀` `🧪` `🔬` `🎯`
+- **Keep** the template markers `✏️` and `▶️` even when they sit in a header, e.g.
+  `## Beat 1 — Measuring the spin ✏️` and `## Beat 3 — Fool it ✏️` keep their `✏️`,
+  because that marker tells the intern the section contains an edit cell.
+- **Keep** `⚠️` on "Step zero", and `✅` / `❌` wherever they appear — all template.
 
 ### The em-dash rule
 
@@ -863,9 +873,15 @@ from 44, 25, 35, 35 into the target bands.
 
 - [ ] **Step 6: Commit**
 
+**`docs/` is gitignored in this repo.** `git add` without `-f` would stage nothing and
+this commit would silently create nothing, losing the task's only deliverable —
+and `git status` would never show the file either, so the failure is invisible. The
+`-f` below is required, not optional.
+
 ```bash
 cd ../twl-nb-prose-cleanup
-git add docs/superpowers/notes/2026-07-19-anchor-flags.md
+git add -f docs/superpowers/notes/2026-07-19-anchor-flags.md
+git status --short   # must list the note as staged (A) before committing
 git commit -m "docs: flag unverified notebook anchor values for Colab pass
 
 Anchors that are literal ellipsis placeholders or ranges rather than
