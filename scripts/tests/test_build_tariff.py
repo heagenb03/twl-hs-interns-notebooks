@@ -44,10 +44,15 @@ def test_prices_are_rounded_to_two_decimals(messy_raw):
 
 
 def test_duplicate_dates_are_dropped_keeping_first(messy_raw):
-    dupe = pd.concat([messy_raw, messy_raw.loc[["2017-01-03"]]])
+    dupe_row = messy_raw.loc[["2017-01-03"]].copy()
+    dupe_row["AAPL"] = 999.99  # distinct from the original's 29.987654
+    dupe = pd.concat([messy_raw, dupe_row])
     out = normalize_prices(dupe)
     assert not out.index.has_duplicates
     assert len(out) == 3
+    # "keep first" means the row from the ORIGINAL file position survives,
+    # not the later duplicate carrying the sentinel value.
+    assert out.loc[pd.Timestamp("2017-01-03"), "AAPL"] == 29.99
 
 
 def test_rows_with_any_null_are_dropped(messy_raw):
@@ -56,3 +61,29 @@ def test_rows_with_any_null_are_dropped(messy_raw):
     out = normalize_prices(holed)
     assert len(out) == 2
     assert pd.Timestamp("2017-01-04") not in out.index
+
+
+def test_missing_expected_ticker_column_drops_all_rows_instead_of_writing_nulls(
+    messy_raw,
+):
+    """A raw pull missing an entire expected ticker must fail loud, not write
+    empty cells: reindex must run BEFORE dropna so the resulting all-NaN
+    column is caught by dropna(how="any"), dropping every row rather than
+    surviving into the CSV as blank values."""
+    missing_column = messy_raw.drop(columns=["SOYB"])
+    out = normalize_prices(missing_column)
+    assert len(out) == 0
+    assert tuple(out.columns) == EXPECTED_TICKERS
+    assert not out.isna().any().any()
+
+
+def test_unexpected_extra_column_with_null_does_not_drop_a_complete_row(messy_raw):
+    """An extra, non-expected column is discarded by reindex before dropna
+    runs, so a null in that extra column must not cause an otherwise-complete
+    row to be dropped."""
+    extra = messy_raw.copy()
+    extra["UNEXPECTED"] = [1.0, None, 3.0]
+    out = normalize_prices(extra)
+    assert len(out) == 3
+    assert "UNEXPECTED" not in out.columns
+    assert not out.isna().any().any()

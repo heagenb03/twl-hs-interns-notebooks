@@ -27,8 +27,8 @@ def normalize_prices(raw: pd.DataFrame) -> pd.DataFrame:
     out = raw.copy()
     out = out[~out.index.duplicated(keep="first")]
     out = out.sort_index()
-    out = out.dropna(how="any")
     out = out.reindex(columns=list(EXPECTED_TICKERS))
+    out = out.dropna(how="any")
     out = out.round(2)
     out.index.name = "date"
     return out
