@@ -137,6 +137,14 @@ cp1252 encoding failures on Windows.
 metadata are preserved unchanged. Cell order and cell count do not change; no cells
 are added or deleted.
 
+**Lossless round-trip test — first step, before any prose edit.** Run the full
+read/write cycle on one notebook making **zero** changes, then confirm `git diff` is
+empty. A naive `json.load` → `json.dump` can silently reflow untouched cells (key
+order, indent width, `source` array splitting, trailing newline, nbformat fields),
+producing a large noisy diff that defeats human review even when no content changed.
+If the diff is not empty, fix the round-trip or switch to `NotebookEdit` before
+touching any prose.
+
 **Order of work.** One notebook at a time, `git diff` reviewed after each, so a bad
 pass is contained to one file.
 
@@ -147,8 +155,9 @@ pass is contained to one file.
 1. `git diff --stat` shows changes confined to `notebooks/*.ipynb`,
    `scripts/make_data*.py`, and `README_week1_notebooks.md`.
 2. A script asserts, for each notebook: cell count unchanged, every code cell's
-   `source` byte-identical to the pre-edit version, and every `outputs` array
-   unchanged.
+   `source` byte-identical to the pre-edit version, every `outputs` array unchanged,
+   and every markdown cell **not on the intended edit list** byte-identical. The last
+   clause is what guarantees the diff is confined to cells this spec named.
 3. `json.load` succeeds on all four notebooks (valid JSON, valid nbformat).
 4. `git diff` on markdown cells reviewed by hand — every changed line is prose.
 5. Anchor flag list in this document confirmed complete against a grep for
