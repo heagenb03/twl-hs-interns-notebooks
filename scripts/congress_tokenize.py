@@ -58,13 +58,31 @@ def companion_words(text: str, window: str = "speech") -> list[str]:
     China at all, every non-stopword in it is a companion. This is the
     definition documented in PROVENANCE.md. Repeats are preserved so the caller
     can count frequency.
+
+    Before tokenizing, CREC's unspaced `--` (used for asides and vote tallies)
+    is normalized to a space, so e.g. "announced--yeas" splits into two words
+    instead of fusing into one that dodges both the stopword and pivot
+    filters. Ordinary single hyphens are left alone, so hyphenated compounds
+    like "most-favored-nation" still tokenize as one word.
+
+    Any token that is 'china' or a china-possessive/compound built from it
+    ("china's", "anti-china", "china-based") is excluded from the companion
+    list as a self-mention of the pivot, not a companion of it.
     """
     if window != "speech":
         raise ValueError(f"unsupported window: {window!r}")
     if not count_term(text, "china"):
         return []
-    words = _WORD_RE.findall(text.lower())
-    return [w for w in words if w not in STOPWORDS and w != "china" and len(w) > 2]
+    text = re.sub(r"-{2,}", " ", text)  # CREC uses -- for asides
+    out: list[str] = []
+    for w in _WORD_RE.findall(text.lower()):
+        w = re.sub(r"'s$", "", w)  # possessive
+        if "china" in w.split("-"):
+            continue
+        if w in STOPWORDS or len(w) <= 2:
+            continue
+        out.append(w)
+    return out
 
 
 def top_companions(segments: list[str], n: int = 10) -> list[tuple[str, int]]:

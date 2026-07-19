@@ -64,3 +64,38 @@ def test_stopwords_include_procedural_record_boilerplate():
     # otherwise dominate every era's top ten and teach nothing.
     for w in ("president", "senator", "yield", "floor", "amendment", "unanimous"):
         assert w in STOPWORDS
+
+
+def test_possessive_pivot_does_not_leak_as_companion():
+    # "China's" is a mention of China (count_term counts it), but it must not
+    # also show up as China's own companion word.
+    words = companion_words("China's economy grew")
+    assert "china's" not in words
+    assert "china" not in words
+
+
+def test_hyphenated_china_compounds_do_not_leak_as_companions():
+    words = companion_words("China trade with anti-China sentiment and China-based firms")
+    assert "anti-china" not in words
+    assert "china-based" not in words
+    assert "china" not in words
+
+
+def test_double_hyphen_fusion_is_split_and_filtered():
+    # CREC uses unspaced -- for asides; without splitting, "policy--and" fuses
+    # into one token that escapes both the stopword filter (hiding "and") and
+    # would otherwise leak into the companion list wholesale.
+    words = companion_words("China policy--and again the trade deficit")
+    assert not any("--" in w for w in words)
+    assert "policy--and" not in words
+    assert "and" not in words  # was hidden inside the fused token; now split and filtered
+    assert "policy" in words
+    assert "again" in words
+
+
+def test_hyphenated_compound_survives_intact():
+    # Regression guard: single hyphens must be preserved. Splitting on them
+    # would destroy real compounds like "most-favored-nation", a documented
+    # top-three 1990s companion word.
+    words = companion_words("China trade and most-favored-nation status")
+    assert "most-favored-nation" in words
