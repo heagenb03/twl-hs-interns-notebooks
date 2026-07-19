@@ -99,3 +99,13 @@ def test_hyphenated_compound_survives_intact():
     # top-three 1990s companion word.
     words = companion_words("China trade and most-favored-nation status")
     assert "most-favored-nation" in words
+
+
+def test_possessive_hyphenated_china_compound_does_not_leak_as_companion():
+    # "china's-based" is a possessive fused onto a hyphenated compound. The
+    # token-final possessive strip never fires (the token ends in "-based",
+    # not "'s"), so the pivot check must strip 's per hyphen-segment instead
+    # of relying on the whole-token strip.
+    words = companion_words("China trade with China's-based firms")
+    assert "china's-based" not in words
+    assert "china" not in words

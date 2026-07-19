@@ -11,6 +11,19 @@ Tokenization rules, stated for data/PROVENANCE.md:
   - adjectival forms do not ("Chinese" is a different word)
   - substrings do not      ("Indochina" is not a mention of China)
   - "tariffs" counts as "tariff"; no other plural is folded
+
+Companion-word tokenization rules (companion_words), also for
+data/PROVENANCE.md:
+  - "--" (two or more consecutive hyphens) becomes a space; a single hyphen
+    stays inside its token, so compounds like "most-favored-nation" survive
+  - possessives fold to their base form on every token, corpus-wide, not
+    just china-forms ("taiwan's" -> "taiwan", "america's" -> "america");
+    this is deliberate, so the companions axis folds possessives the same
+    way count_term's TERM_VARIANTS already does on the mentions axis
+  - china is excluded as the pivot if it appears, possessive or not, as one
+    of a token's hyphen-separated segments ("china", "china's",
+    "anti-china", "china-based", "china's-based")
+  - tokens of 2 characters or fewer are dropped, then stopwords are dropped
 """
 from __future__ import annotations
 
@@ -65,9 +78,17 @@ def companion_words(text: str, window: str = "speech") -> list[str]:
     filters. Ordinary single hyphens are left alone, so hyphenated compounds
     like "most-favored-nation" still tokenize as one word.
 
-    Any token that is 'china' or a china-possessive/compound built from it
-    ("china's", "anti-china", "china-based") is excluded from the companion
-    list as a self-mention of the pivot, not a companion of it.
+    Possessives fold to their base form ("china's" -> "china", "taiwan's" ->
+    "taiwan") for every token, not just china-forms, so this axis agrees with
+    the mentions axis in count_term, which already folds possessives via
+    TERM_VARIANTS.
+
+    A token is excluded from the companion list as a self-mention of the
+    pivot if, after stripping any trailing possessive from each of its
+    hyphen-separated segments, one of those segments is exactly "china".
+    This covers the bare pivot ("china"), a token-final possessive
+    ("china's"), hyphenated compounds ("anti-china", "china-based"), and a
+    possessive fused onto a compound ("china's-based").
     """
     if window != "speech":
         raise ValueError(f"unsupported window: {window!r}")
@@ -77,7 +98,7 @@ def companion_words(text: str, window: str = "speech") -> list[str]:
     out: list[str] = []
     for w in _WORD_RE.findall(text.lower()):
         w = re.sub(r"'s$", "", w)  # possessive
-        if "china" in w.split("-"):
+        if "china" in [re.sub(r"'s$", "", part) for part in w.split("-")]:
             continue
         if w in STOPWORDS or len(w) <= 2:
             continue
