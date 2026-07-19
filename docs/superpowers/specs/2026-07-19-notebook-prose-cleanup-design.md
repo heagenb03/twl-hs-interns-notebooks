@@ -76,9 +76,21 @@ Surgical phrase-level replacements. Four tell families, all confirmed:
 **Emoji removal** applies to the four H1 titles and the stretch/bonus headers
 (🧠 🔀 🧪 🔬 🎯 📰🔍 📉⚡ 🏛️📈). The ▶️ ✏️ ⚠️ ✅ markers are template and stay.
 
-**Em-dash reduction** is applied where a comma, colon, or sentence break reads the
-same. It is not mechanical — em dashes that carry a genuine parenthetical or a sharp
-turn stay. Target is reducing density, not elimination.
+**Em-dash reduction** covers both the triad pattern *and* general density across all
+prose. Heagen confirmed the wider scope on 2026-07-19, knowingly extending past the
+otherwise-surgical posture: it is the one edit class permitted to touch most prose
+cells. Everything else in this spec stays surgical.
+
+Rules for the pass:
+- Replace an em dash with a comma, colon, or sentence break wherever the sentence
+  reads the same afterward.
+- Keep em dashes that carry a genuine parenthetical (a clause that could sit in
+  parentheses) or a sharp reversal where the break is doing real work.
+- Never introduce a semicolon as a substitute — it reads more formal than these
+  notebooks' register.
+- Reduce, do not eliminate. A notebook with zero em dashes reads as over-corrected.
+- Em dashes inside "What you should see" boxes, quoted headlines, quoted bill text,
+  and code strings are sacred and excluded.
 
 ### 2. Redundancy
 
@@ -158,7 +170,16 @@ pass is contained to one file.
    `source` byte-identical to the pre-edit version, every `outputs` array unchanged,
    and every markdown cell **not on the intended edit list** byte-identical. The last
    clause is what guarantees the diff is confined to cells this spec named.
-3. `json.load` succeeds on all four notebooks (valid JSON, valid nbformat).
+3. `json.load` succeeds on all four notebooks (valid JSON, valid nbformat), plus
+   **structural assertions** on markdown content, run before and after and compared:
+   - Count of `▶️ JUST RUN`, `✏️ YOUR TURN`, and `# <-- EDIT` markers is unchanged.
+   - Count of `> **What you should see:**` blockquote boxes is unchanged.
+   - Count of `**If you get a red error:**` hints is unchanged.
+   - Every `## ` section header is present with the same text, minus stripped emoji.
+   - The multiset of all numeric literals (integers, decimals, percentages, dates,
+     year ranges) extracted from markdown is **identical** before and after. This is
+     the strongest single check: it proves the em-dash pass did not disturb any
+     anchor value, count, or date while rewriting the prose around it.
 4. `git diff` on markdown cells reviewed by hand — every changed line is prose.
 5. Anchor flag list in this document confirmed complete against a grep for
    ellipsis-in-anchor and range-in-anchor patterns.
@@ -181,5 +202,11 @@ which no amount of diff-reading provides on its own.
 
 ## Estimated blast radius
 
-~35–45 markdown cells across four notebooks, plus comment blocks in four scripts and
+~35–45 markdown cells across four notebooks (roughly 80–90% of all prose cells, driven
+almost entirely by the general em-dash pass), plus comment blocks in four scripts and
 prose in one README. Zero code-cell changes.
+
+Because the em-dash pass touches most cells, the diff is large by design and criterion 2
+cannot lean on "few cells changed" as a safety net. The real guarantees are criterion 2's
+code-cell and outputs assertions plus criterion 3's structural assertions — those hold
+regardless of how many prose cells move.
