@@ -29,6 +29,12 @@ from calibrate_splice import (
     OVERLAP_START_YEAR,
     choose_strategy,
     compare_overlap,
+    require_complete_overlap,
+)
+from congress_cache import (
+    MIN_REAL_DAYS_PER_YEAR,
+    govinfo_range_usable,
+    iter_govinfo_days,
 )
 from congress_tokenize import count_all_terms
 from twl_common import (
@@ -96,29 +102,19 @@ def govinfo_counts_by_year(
     'bad_json' (day file failed to parse), 'phantom_marker' (no "granules"
     key), 'granule_no_text' (granule dict missing/empty "text").
     """
-    counts: dict[int, dict[str, int]] = {}
+    counts: dict[int, dict[str, int]] = {
+        year: _empty_term_counts()
+        for year in range(start_year, end_year + 1)
+        if (raw_dir / str(year)).is_dir()
+    }
     skips = {"bad_json": 0, "phantom_marker": 0, "granule_no_text": 0}
-    for year in range(start_year, end_year + 1):
-        year_dir = raw_dir / str(year)
-        if not year_dir.is_dir():
-            continue
-        year_counts = _empty_term_counts()
-        for path in sorted(year_dir.glob("*.json")):
-            try:
-                day = json.loads(path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
-                skips["bad_json"] += 1
+    for day in iter_govinfo_days(raw_dir, start_year, end_year, skips):
+        for granule in day.granules:
+            text = granule.get("text")
+            if not text:
+                skips["granule_no_text"] += 1
                 continue
-            if "granules" not in day:
-                skips["phantom_marker"] += 1
-                continue
-            for granule in day["granules"]:
-                text = granule.get("text")
-                if not text:
-                    skips["granule_no_text"] += 1
-                    continue
-                _add_counts(year_counts, text)
-        counts[year] = year_counts
+            _add_counts(counts[day.year], text)
     return counts, skips
 
 
@@ -166,17 +162,13 @@ def gentzkow_counts_by_year(
     return counts, skips
 
 
-def _govinfo_years_present(raw_dir: Path, years: range) -> bool:
-    """True if at least one non-phantom day exists for any year in `years`."""
-    for year in years:
-        year_dir = raw_dir / str(year)
-        if not year_dir.is_dir():
-            continue
-        if any(
-            p for p in year_dir.glob("*.json") if not p.name.endswith(".phantom.json")
-        ):
-            return True
-    return False
+GOVINFO_START_YEAR = OVERLAP_START_YEAR
+"""First year the GovInfo cache is expected to cover.
+
+MENTIONS_YEARS starts at 1990, but GovInfo's CREC only begins at the overlap
+start, so a completeness gate over the full MENTIONS_YEARS range would demand
+years that cannot exist. 1990-1993 comes from Gentzkow alone.
+"""
 
 
 def build() -> pd.DataFrame:
@@ -231,6 +223,13 @@ def build() -> pd.DataFrame:
         for year, counts in govinfo_counts.items()
         if OVERLAP_START_YEAR <= year <= OVERLAP_END_YEAR
     }
+    # C2: assert the overlap is deep enough BEFORE deriving a verdict from it.
+    # build() is runnable standalone, so it cannot rely on calibrate_splice's
+    # own main() having gated first. A uniformly partial cache yields cv 0.0000
+    # here just as it does there, and this is the call site that actually
+    # rewrites the numbers.
+    require_complete_overlap(CONGRESS_RAW_GENTZKOW, CONGRESS_RAW_GOVINFO)
+
     comparison = compare_overlap(overlap_gentzkow, overlap_govinfo)
     strategy = choose_strategy(comparison)
     print(f"calibrate_splice.choose_strategy: {strategy}")
@@ -282,10 +281,17 @@ def build() -> pd.DataFrame:
 
 def main() -> int:
     missing = []
-    if not _govinfo_years_present(CONGRESS_RAW_GOVINFO, MENTIONS_YEARS):
+    govinfo_end = max(MENTIONS_YEARS)
+    usable, bad_years = govinfo_range_usable(
+        CONGRESS_RAW_GOVINFO, GOVINFO_START_YEAR, govinfo_end
+    )
+    if not usable:
         missing.append(
-            f"  - GovInfo cache missing or empty: {CONGRESS_RAW_GOVINFO}\n"
-            "    Produce it with: python scripts/fetch_congress_govinfo.py"
+            f"  - GovInfo cache missing or incomplete for {GOVINFO_START_YEAR}-"
+            f"{govinfo_end} (need >= {MIN_REAL_DAYS_PER_YEAR} real cached days "
+            f"per year; short or absent: {bad_years}): {CONGRESS_RAW_GOVINFO}\n"
+            "    Produce it with: python scripts/fetch_congress_govinfo.py "
+            f"--start-year {GOVINFO_START_YEAR} --end-year {govinfo_end}"
         )
     if not CONGRESS_RAW_GENTZKOW.exists() or not any(
         CONGRESS_RAW_GENTZKOW.glob("speeches_senate_*.jsonl")

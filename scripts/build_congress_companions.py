@@ -30,6 +30,11 @@ from pathlib import Path
 import pandas as pd
 
 from calibrate_splice import OVERLAP_END_YEAR
+from congress_cache import (
+    MIN_REAL_DAYS_PER_YEAR,
+    govinfo_range_usable,
+    iter_govinfo_days,
+)
 from congress_tokenize import count_term, top_companions
 from twl_common import (
     CONGRESS_ERAS,
@@ -113,32 +118,20 @@ def govinfo_segments_by_era(
         "year_outside_known_eras": 0,
         "no_china_mention": 0,
     }
-    for year in range(start_year, end_year + 1):
-        year_dir = raw_dir / str(year)
-        if not year_dir.is_dir():
-            continue
-        era = _era_for_year(year)
-        for path in sorted(year_dir.glob("*.json")):
-            try:
-                day = json.loads(path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
-                skips["bad_json"] += 1
+    for day in iter_govinfo_days(raw_dir, start_year, end_year, skips):
+        era = _era_for_year(day.year)
+        for granule in day.granules:
+            text = granule.get("text")
+            if not text:
+                skips["granule_no_text"] += 1
                 continue
-            if "granules" not in day:
-                skips["phantom_marker"] += 1
+            if era is None:
+                skips["year_outside_known_eras"] += 1
                 continue
-            for granule in day["granules"]:
-                text = granule.get("text")
-                if not text:
-                    skips["granule_no_text"] += 1
-                    continue
-                if era is None:
-                    skips["year_outside_known_eras"] += 1
-                    continue
-                if not count_term(text, "china"):
-                    skips["no_china_mention"] += 1
-                    continue
-                segments[era].append(text)
+            if not count_term(text, "china"):
+                skips["no_china_mention"] += 1
+                continue
+            segments[era].append(text)
     return segments, skips
 
 
@@ -198,19 +191,6 @@ def gentzkow_segments_by_era(
                     continue
                 segments[era].append(text)
     return segments, skips
-
-
-def _govinfo_years_present(raw_dir: Path, years: range) -> bool:
-    """True if at least one non-phantom day exists for any year in `years`."""
-    for year in years:
-        year_dir = raw_dir / str(year)
-        if not year_dir.is_dir():
-            continue
-        if any(
-            p for p in year_dir.glob("*.json") if not p.name.endswith(".phantom.json")
-        ):
-            return True
-    return False
 
 
 def build() -> pd.DataFrame:
@@ -278,13 +258,23 @@ def main() -> int:
             "    Produce it with: python scripts/fetch_congress_gentzkow.py"
         )
     govinfo_start, mentions_end = OVERLAP_END_YEAR + 1, max(MENTIONS_YEARS)
-    if not _govinfo_years_present(
-        CONGRESS_RAW_GOVINFO, range(govinfo_start, mentions_end + 1)
-    ):
+    # C1: presence is not completeness. The check this replaced returned True
+    # for a single leftover smoke-test day, after which build() completed,
+    # printed no error, and wrote a validator-clean 40-row CSV whose 2020s row
+    # -- Beat 2's entire 2020s teaching claim -- was derived from one day of
+    # Senate business: nato, state, all, one, richard, whereas, united, states,
+    # hezbollah, washington. build_congress_senators already used a per-year
+    # floor; it was never applied back here.
+    usable, bad_years = govinfo_range_usable(
+        CONGRESS_RAW_GOVINFO, govinfo_start, mentions_end
+    )
+    if not usable:
         missing.append(
-            f"  - GovInfo cache missing or empty for {govinfo_start}-{mentions_end}: "
-            f"{CONGRESS_RAW_GOVINFO}\n"
-            "    Produce it with: python scripts/fetch_congress_govinfo.py"
+            f"  - GovInfo cache missing or incomplete for {govinfo_start}-"
+            f"{mentions_end} (need >= {MIN_REAL_DAYS_PER_YEAR} real cached days "
+            f"per year; short or absent: {bad_years}): {CONGRESS_RAW_GOVINFO}\n"
+            "    Produce it with: python scripts/fetch_congress_govinfo.py "
+            f"--start-year {govinfo_start} --end-year {mentions_end}"
         )
     if missing:
         print(
