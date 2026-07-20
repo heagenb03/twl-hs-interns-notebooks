@@ -27,3 +27,27 @@ def test_comparison_reports_per_year_detail():
     comparison = compare_overlap(g, v)
     assert len(comparison["per_year"]) == 23
     assert "cv" in comparison
+
+
+def test_offsetting_outliers_do_not_slip_past_as_concatenate():
+    """Two opposite outliers must not cancel into a false 'these agree'.
+
+    mean_rel_diff alone reads 4.35% here (inside AGREE_TOLERANCE) while cv is
+    14.7% (outside STABLE_CV): the mean says the series agree, the spread says
+    they do not track each other. Short-circuiting on mean_rel_diff would
+    return 'concatenate' and the stability gate would never run.
+
+    This is the gate that protects Beat 1. Its headline claim is that china
+    mentions climb steeply after 2017, and 2017 is the splice point, so a
+    wrong 'concatenate' manufactures a step change indistinguishable from the
+    real finding.
+    """
+    gentzkow = {y: 100 for y in range(1994, 2017)}
+    govinfo = dict(gentzkow)
+    govinfo[2000] = 150
+    govinfo[2001] = 50
+
+    comparison = compare_overlap(gentzkow, govinfo)
+    assert comparison["mean_rel_diff"] <= 0.05, "fixture no longer exercises the artifact"
+    assert comparison["cv"] > 0.10, "fixture no longer exercises the artifact"
+    assert choose_strategy(comparison) == "govinfo_only"

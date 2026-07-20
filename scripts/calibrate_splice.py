@@ -63,8 +63,27 @@ def compare_overlap(
 
 
 def choose_strategy(comparison: dict) -> str:
-    """Pick the splice strategy the comparison supports."""
-    if comparison["mean_rel_diff"] <= AGREE_TOLERANCE:
+    """Pick the splice strategy the comparison supports.
+
+    `concatenate` requires BOTH gates, not just agreement on the mean. Checking
+    mean_rel_diff alone and returning early lets two offsetting outlier years
+    cancel: measured on a 23-year overlap with one +50% and one -50% year,
+    mean_rel_diff is 4.35% (inside the 5% tolerance) while cv is 14.7% (well
+    outside the 10% stability bound). The mean says "these agree"; the spread
+    says "these do not track each other". Without the conjunction the stability
+    gate never runs and the halves are joined anyway.
+
+    That failure lands exactly where it does the most damage. Beat 1's headline
+    claim is that china mentions climb steeply after 2017, and 2017 IS the
+    splice point, so a wrong `concatenate` manufactures a step change that
+    cannot be told apart from the finding the notebook teaches.
+
+    Requiring both changes no correct verdict: a genuinely close series still
+    concatenates, a stable ratio still scales, an unstably diverging series
+    still falls back to govinfo_only. Only the offsetting-outlier case moves,
+    from concatenate to govinfo_only.
+    """
+    if comparison["mean_rel_diff"] <= AGREE_TOLERANCE and comparison["cv"] <= STABLE_CV:
         return "concatenate"
     if comparison["cv"] <= STABLE_CV:
         return "scale"
