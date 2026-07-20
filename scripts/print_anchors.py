@@ -67,13 +67,14 @@ def tariff_anchors(prices: pd.DataFrame) -> dict[str, object]:
         for ticker in EXPECTED_TICKERS:
             key = f"day0/{date}/{ticker}"
             try:
-                anchors[key] = round(day_zero_move(prices, ticker, date), 2)
+                anchors[key] = day_zero_move(prices, ticker, date)
             except (KeyError, ValueError) as exc:
                 anchors[key] = f"unavailable: {exc}"
 
     # Beat 3 stretch: BA's market-adjusted move 5 sessions after 2019-08-23.
-    anchors["stretch/BA_market_adjusted_5d/2019-08-23"] = round(
-        market_adjusted_move(prices, "BA", "2019-08-23", days=5), 2
+    # Kept as a raw float — format once, at print time, to match the notebook.
+    anchors["stretch/BA_market_adjusted_5d/2019-08-23"] = market_adjusted_move(
+        prices, "BA", "2019-08-23", days=5
     )
     return anchors
 
