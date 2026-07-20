@@ -43,10 +43,31 @@ def fetch(
     if raw.empty:
         raise RuntimeError("yfinance returned no data; check network and tickers")
 
-    close = raw["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw[["Close"]]
+    if not isinstance(raw.columns, pd.MultiIndex):
+        raise RuntimeError(
+            "yfinance returned flat (non-MultiIndex) columns, which this script "
+            "does not know how to map back to tickers. That shape is only "
+            "expected for a single-ticker download with multi_level_index=False, "
+            "neither of which applies here. Refusing to guess."
+        )
+
+    close = raw["Close"]
     close = close.reindex(columns=list(tickers))
     close.index.name = "date"
     return close
+
+
+def _null_report(close: pd.DataFrame) -> dict[str, list[str]]:
+    """Map ticker -> sorted list of ISO date strings where that ticker is null.
+
+    Only tickers with at least one null are included.
+    """
+    report: dict[str, list[str]] = {}
+    for ticker in close.columns:
+        mask = close[ticker].isna()
+        if mask.any():
+            report[ticker] = [d.date().isoformat() for d in close.index[mask]]
+    return report
 
 
 def main() -> int:
@@ -62,6 +83,25 @@ def main() -> int:
         return 0
 
     close = fetch()
+
+    bad = _null_report(close)
+    if bad:
+        rejected_path = RAW_PATH.with_suffix(".rejected.csv")
+        close.to_csv(rejected_path)
+        print(
+            f"REFUSING to write {RAW_PATH}: null values found in the fresh pull.",
+            file=sys.stderr,
+        )
+        print(
+            f"Existing cache (if any) left untouched. Bad pull written to "
+            f"{rejected_path} for inspection.",
+            file=sys.stderr,
+        )
+        print("Affected tickers and dates:", file=sys.stderr)
+        for ticker, dates in bad.items():
+            print(f"  {ticker}: {len(dates)} null(s) on {dates}", file=sys.stderr)
+        return 1
+
     close.to_csv(RAW_PATH)
     print(f"wrote {RAW_PATH}  rows={len(close)}  cols={list(close.columns)}")
     print(f"range: {close.index.min().date()} -> {close.index.max().date()}")
