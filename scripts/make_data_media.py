@@ -1,5 +1,5 @@
 """Synthetic headlines in the STYLE of four outlets across six US-China events.
-All headlines are invented (no real headlines reproduced) — written to carry
+All headlines are invented (no real headlines reproduced), written to carry
 each outlet's characteristic framing so both the sentiment beat and the
 outlet-classifier beat have signal. 4 outlets x 6 events x 3 = 72 rows."""
 import pandas as pd

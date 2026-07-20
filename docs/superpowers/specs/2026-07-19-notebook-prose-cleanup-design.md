@@ -2,8 +2,38 @@
 
 **Date:** 2026-07-19
 **Status:** Approved
+**Branch:** `prose-cleanup`, in worktree `../twl-nb-prose-cleanup`
 **Scope:** Voice and redundancy cleanup across the four Week 1 intern notebooks, the
 data-generation scripts, and the week-1 README.
+
+---
+
+## Coordination with the real-data-swap work
+
+A second session is executing
+`docs/superpowers/specs/2026-07-19-real-data-swap-design.md`, which regenerates
+`tariff_prices.csv`, the three congress CSVs, and adds `headlines_real.csv`. That work
+**changes anchor numbers this spec treats as sacred**, so the two efforts overlap.
+
+Isolation and merge strategy:
+
+- This work happens on the `prose-cleanup` branch in a separate worktree. The data swap
+  proceeds on `main`. Merge happens **after** the data swap lands.
+- **The conflict surface is the "What you should see" boxes.** The data swap rewrites
+  their numbers; this pass must not touch them at all. Leaving them byte-identical
+  makes the merge clean by construction rather than by negotiation. Verification
+  criterion 3's numeric-literal assertion is what enforces this mechanically.
+- If a merge conflict appears inside an anchor box, **the data-swap version wins** —
+  it has the real numbers. This pass has no legitimate claim to any anchor value.
+
+Two of that spec's recorded assumptions were **reversed by Heagen on 2026-07-19** and
+are now stale in `.wolf/cerebrum.md`:
+
+- `scripts/` is no longer gitignored. The four `make_data_*.py` generators are tracked
+  as of commit `e3a8a5d`, so provenance lives in the repo. The cerebrum note saying he
+  wants them to stay untracked (and to use a committed `data/PROVENANCE.md` instead) no
+  longer reflects his position.
+- `.wolf/` is now gitignored *and* untracked, after being briefly committed in error.
 
 ---
 
@@ -114,6 +144,12 @@ Three confirmed cases:
 Same voice pass applied to **comments and docstrings only** in
 `scripts/make_data.py`, `make_data_congress.py`, `make_data_media.py`,
 `make_data_tariff.py`. No logic changes, no schema changes.
+
+These four files became tracked in commit `e3a8a5d` (`scripts/` removed from
+`.gitignore` at Heagen's direction), so unlike earlier in this spec's life, these edits
+are committable. Note the real-data-swap work plans to restructure these generators
+into a fetch/build split — the comment pass here is deliberately shallow for that
+reason, and any file that session rewrites wholesale should take its version on merge.
 
 `README_week1_notebooks.md` prose is tightened. Its **TODO list** and **Design
 decisions worth remembering** sections stay intact — they are working notes, not
