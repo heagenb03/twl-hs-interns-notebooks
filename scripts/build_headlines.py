@@ -30,10 +30,33 @@ _SUFFIX = re.compile(
     flags=re.IGNORECASE,
 )
 
+# GDELT's title field inserts spaces around punctuation ("U . S .",
+# "COVID - 19", "A Huge , Uncharted Experiment", "re - election"). This is
+# tokenizer corruption, not editorial style -- it degrades VADER sentiment
+# scoring and classifier input, so it is repaired here rather than left as
+# signal.
+_SPACE_BEFORE_PUNCT = re.compile(r"\s+([,.;:!?%])")
+_TOKENIZED_HYPHEN = re.compile(r"(?<=\w) - (?=\w)")
+_TOKENIZED_POSSESSIVE = re.compile(r"\s+'s\b")
+
+# GDELT's "(china OR chinese)" query matches the ARTICLE BODY, not the title, so
+# roughly half the fetched headlines are unrelated to China or trade. Worse, the
+# off-topic rate varies by outlet, which would let the notebook's outlet classifier
+# win by learning topic mix rather than writing style. Requiring the topic in the
+# HEADLINE removes that confound.
+TOPIC_PATTERN = re.compile(
+    r"china|chinese|beijing|xi jinping|tariff|trade war|trade deal|huawei|tiktok"
+    r"|yuan|hong kong|xinjiang|taiwan|phase one|spy balloon|wto",
+    flags=re.IGNORECASE,
+)
+
 
 def clean_title(title: str) -> str:
-    """Strip outlet suffixes and collapse whitespace."""
+    """Strip outlet suffixes, repair GDELT tokenizer spacing, and collapse whitespace."""
     cleaned = _SUFFIX.sub("", title or "")
+    cleaned = _SPACE_BEFORE_PUNCT.sub(r"\1", cleaned)
+    cleaned = _TOKENIZED_HYPHEN.sub("-", cleaned)
+    cleaned = _TOKENIZED_POSSESSIVE.sub("'s", cleaned)
     return re.sub(r"\s+", " ", cleaned).strip()
 
 
@@ -50,6 +73,14 @@ def build_frame(raw: dict) -> pd.DataFrame:
     required because the notebook trains an outlet classifier on headline
     text: a duplicate (outlet, headline) surviving under two events would let
     the same example leak into both a train split and a test split.
+
+    Dedup runs on the DE-TOKENIZED headline (clean_title output), so two raw
+    titles that differ only by GDELT tokenizer spacing collapse into one row.
+
+    Headlines with no China/trade keyword (see TOPIC_PATTERN) are dropped --
+    GDELT's query matches the article body, not the title, so a large share
+    of fetched headlines are off-topic, and that off-topic rate varies by
+    outlet, which would otherwise confound the outlet classifier.
     """
     rows: list[dict[str, str]] = []
     seen_by_outlet: dict[str, set[str]] = {outlet: set() for outlet in OUTLET_DOMAINS}
@@ -59,7 +90,7 @@ def build_frame(raw: dict) -> pd.DataFrame:
             seen = seen_by_outlet[outlet]
             for article in outlets.get(outlet, []):
                 headline = clean_title(article.get("title", ""))
-                if not headline or headline in seen:
+                if not headline or headline in seen or not TOPIC_PATTERN.search(headline):
                     continue
                 seen.add(headline)
                 rows.append({"event": event, "outlet": outlet, "headline": headline})

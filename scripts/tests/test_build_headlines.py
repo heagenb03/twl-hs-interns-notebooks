@@ -108,3 +108,51 @@ def test_blank_titles_are_dropped():
     ], "WSJ": [], "Fox": [], "Xinhua": []}}
     out = build_frame(raw)
     assert len(out) == 0
+
+
+def test_clean_title_removes_space_before_punctuation():
+    assert clean_title("Hello , World . Fine : Yes") == "Hello, World. Fine: Yes"
+
+
+def test_clean_title_repairs_tokenized_hyphens():
+    assert clean_title("COVID - 19 forces re - election") == "COVID-19 forces re-election"
+
+
+def test_clean_title_collapses_tokenized_possessive():
+    assert clean_title("China 's Economy Slows") == "China's Economy Slows"
+
+
+def test_clean_title_still_strips_outlet_suffixes_and_leaves_clean_titles_alone():
+    assert clean_title("Some Headline - The New York Times") == "Some Headline"
+    assert clean_title("Tariffs Imposed on Chinese Goods") == "Tariffs Imposed on Chinese Goods"
+
+
+def test_off_topic_headline_is_dropped():
+    """GDELT's (china OR chinese) query matches the article body, not the
+    title, so many fetched headlines have no China/trade keyword at all."""
+    raw = {"Phase One deal": {"NYT": [
+        {"title": "Your Thursday Briefing", "url": "u", "domain": "nytimes.com", "seendate": ""},
+    ], "WSJ": [], "Fox": [], "Xinhua": []}}
+    out = build_frame(raw)
+    assert len(out) == 0
+
+
+def test_on_topic_headline_is_kept():
+    raw = {"Phase One deal": {"NYT": [
+        {"title": "China Trade Deal Reached", "url": "u", "domain": "nytimes.com", "seendate": ""},
+    ], "WSJ": [], "Fox": [], "Xinhua": []}}
+    out = build_frame(raw)
+    assert len(out) == 1
+    assert out.iloc[0]["headline"] == "China Trade Deal Reached"
+
+
+def test_detokenization_runs_before_dedup():
+    """Two raw titles differing only by tokenization spacing must collapse
+    into a single row -- dedup has to run on the DE-TOKENIZED headline."""
+    raw = {"Phase One deal": {"NYT": [
+        {"title": "China Trade Deal , Explained", "url": "u1", "domain": "nytimes.com", "seendate": ""},
+        {"title": "China Trade Deal, Explained", "url": "u2", "domain": "nytimes.com", "seendate": ""},
+    ], "WSJ": [], "Fox": [], "Xinhua": []}}
+    out = build_frame(raw)
+    assert len(out) == 1
+    assert out.iloc[0]["headline"] == "China Trade Deal, Explained"
