@@ -20,12 +20,7 @@ import statistics
 import sys
 from pathlib import Path
 
-from congress_cache import (
-    MIN_REAL_DAYS_PER_YEAR,
-    govinfo_range_usable,
-    iter_govinfo_days,
-    real_day_counts,
-)
+from congress_cache import coverage_report, govinfo_range_usable, iter_govinfo_days
 from congress_tokenize import count_term
 from twl_common import CONGRESS_RAW_GENTZKOW, CONGRESS_RAW_GOVINFO
 
@@ -239,12 +234,12 @@ def require_complete_overlap(
 
     _, bad_govinfo = govinfo_range_usable(govinfo_dir, start_year, end_year)
     if bad_govinfo:
-        counts = real_day_counts(govinfo_dir, start_year, end_year)
-        detail = ", ".join(f"{y} ({counts[y]} day(s))" for y in bad_govinfo)
+        report = coverage_report(govinfo_dir, start_year, end_year)
+        detail = "\n".join(f"      {report[y].describe()}" for y in bad_govinfo)
         problems.append(
             f"  - GovInfo: {len(bad_govinfo)} of "
-            f"{end_year - start_year + 1} overlap year(s) below "
-            f"{MIN_REAL_DAYS_PER_YEAR} real cached days: {detail}"
+            f"{end_year - start_year + 1} overlap year(s) not fully covered "
+            f"against their sitemap manifest:\n{detail}"
         )
 
     gentzkow_counts = _gentzkow_speech_counts_by_year(

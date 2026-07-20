@@ -36,19 +36,23 @@ from calibrate_splice import (
     compare_overlap,
     require_complete_overlap,
 )
-from congress_cache import MIN_REAL_DAYS_PER_YEAR
+from congress_cache import MIN_REAL_DAYS_PER_YEAR, write_manifest
 
 OVERLAP_YEARS = range(OVERLAP_START_YEAR, OVERLAP_END_YEAR + 1)
 
 
-def _fill_govinfo(root, years, days_per_year=MIN_REAL_DAYS_PER_YEAR):
+SESSION_DAYS = 30  # stands in for a full Senate year (~150); kept small for test speed
+
+
+def _fill_govinfo(root, years, days_per_year=SESSION_DAYS, expected=SESSION_DAYS):
     for year in years:
         year_dir = root / str(year)
         year_dir.mkdir(parents=True, exist_ok=True)
-        for i in range(days_per_year):
-            (year_dir / f"CREC-{year}-{i:03d}.json").write_text(
-                json.dumps({"package": f"CREC-{year}-{i:03d}",
-                            "granules": [{"text": "china trade"}]}),
+        packages = [f"CREC-{year}-{i:03d}" for i in range(expected)]
+        write_manifest(root, year, packages)
+        for pkg in packages[:days_per_year]:
+            (year_dir / f"{pkg}.json").write_text(
+                json.dumps({"package": pkg, "granules": [{"text": "china trade"}]}),
                 encoding="utf-8",
             )
 
@@ -85,7 +89,7 @@ def test_complete_overlap_passes(tmp_path):
 def test_a_short_govinfo_year_blocks_the_verdict(tmp_path):
     govinfo, gentzkow = tmp_path / "gov", tmp_path / "gen"
     _fill_govinfo(govinfo, [y for y in OVERLAP_YEARS if y != 2005])
-    _fill_govinfo(govinfo, [2005], days_per_year=MIN_REAL_DAYS_PER_YEAR - 1)
+    _fill_govinfo(govinfo, [2005], days_per_year=25)
     _fill_gentzkow(gentzkow, OVERLAP_YEARS, calibrate_splice.MIN_GENTZKOW_SPEECHES_PER_YEAR)
     with pytest.raises(OverlapIncompleteError) as exc:
         require_complete_overlap(gentzkow, govinfo)
@@ -95,7 +99,7 @@ def test_a_short_govinfo_year_blocks_the_verdict(tmp_path):
 def test_a_uniformly_partial_govinfo_cache_blocks_the_verdict(tmp_path):
     """Every overlap year present, every one short. Presence checks pass this."""
     govinfo, gentzkow = tmp_path / "gov", tmp_path / "gen"
-    _fill_govinfo(govinfo, OVERLAP_YEARS, days_per_year=2)
+    _fill_govinfo(govinfo, OVERLAP_YEARS, days_per_year=25)
     _fill_gentzkow(gentzkow, OVERLAP_YEARS, calibrate_splice.MIN_GENTZKOW_SPEECHES_PER_YEAR)
     with pytest.raises(OverlapIncompleteError):
         require_complete_overlap(gentzkow, govinfo)

@@ -21,6 +21,7 @@ from xml.etree import ElementTree as ET
 
 import requests
 
+from congress_cache import write_manifest
 from twl_common import (
     CONGRESS_RAW_GOVINFO,
     GOVINFO_HTML_URL,
@@ -247,6 +248,13 @@ def main() -> int:
                 "Aborting instead of silently recording an empty year."
             )
             return 1
+
+        # Record what a complete year looks like BEFORE downloading any of it.
+        # An interrupted year then leaves a manifest saying 150 next to 40
+        # cached days -- the discrepancy the build-side coverage gate reads. A
+        # manifest written after the loop would simply be absent on an
+        # interruption, and absence cannot be told apart from "never started".
+        write_manifest(CONGRESS_RAW_GOVINFO, year, days)
 
         skipped: list[str] = []
         failed: list[str] = []

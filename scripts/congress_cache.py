@@ -24,8 +24,16 @@ This module also owns the difference between a cache being PRESENT and a cache
 being COMPLETE. `_govinfo_years_present`-style checks are satisfied by one
 leftover smoke-test day, which is how build_congress_companions came to accept
 a single day of Senate business as a corpus and write a validator-clean
-congress_companions.csv. `govinfo_range_usable` requires every year in the
-range to clear a real-day floor instead.
+congress_companions.csv.
+
+Completeness is measured against a per-year MANIFEST the fetcher writes from
+the sitemap, not against a flat day floor. A flat floor answers "did the fetch
+start for this year", which is the wrong question for the splice calibration:
+there, the ratio between the two corpora is directly proportional to how much
+of each was downloaded, so a uniformly partial cache produces a perfectly
+stable ratio and certifies a bogus `scale` join. Only the sitemap knows how
+many days a year should hold, and the manifest is how that number reaches an
+offline build without putting a network call inside it.
 
 It cannot live in build_congress_mentions.py: calibrate_splice would import it
 and build_congress_mentions already imports calibrate_splice.
@@ -43,6 +51,14 @@ The Senate sits well over 100 days in a normal year, so 20 is deliberately
 loose -- it is a tripwire for an interrupted or never-started fetch, not an
 attendance model. It must never be 0: that would make every range usable,
 including an empty cache.
+"""
+
+MAX_PHANTOM_SHARE = 0.10
+"""Ceiling on the fraction of a year's expected days that may be phantoms.
+
+The only measured real-world rate is ~1.4% (2023: 3 of 209 days). This mirrors
+fetch_congress_govinfo's own sanity threshold so that a year cannot be declared
+complete on markers alone.
 """
 
 PHANTOM_SKIP = "phantom_marker"
@@ -122,22 +138,156 @@ def real_day_counts(raw_dir: Path, start_year: int, end_year: int) -> dict[int, 
     return counts
 
 
-def govinfo_range_usable(
-    raw_dir: Path,
-    start_year: int,
-    end_year: int,
-    min_days: int = MIN_REAL_DAYS_PER_YEAR,
-) -> tuple[bool, list[int]]:
-    """True only if EVERY year in the range clears `min_days` real cached days.
+def phantom_counts(raw_dir: Path, start_year: int, end_year: int) -> dict[int, int]:
+    """Committed phantom markers per year -- days GovInfo proves do not exist.
 
-    This is the completeness check, as distinct from a presence check. Presence
-    is satisfied by a single day anywhere in the range -- which is how a
-    leftover 2023 smoke-test directory passed as an eight-year corpus. An
-    interrupted fetch does not fail uniformly either: it stops partway through
-    one year, so the gate has to be per-year rather than over the range.
-
-    Returns (usable, sorted list of years that are missing or short).
+    A phantom day is genuinely absent from GovInfo, not missing from our cache,
+    so it counts toward a year being fully accounted for. fetch_congress_govinfo
+    only commits markers once the year clears its own sanity gate, so a marker
+    on disk is a believable claim rather than an outage artifact.
     """
-    counts = real_day_counts(raw_dir, start_year, end_year)
-    bad_years = sorted(year for year, n in counts.items() if n < min_days)
+    counts = {year: 0 for year in range(start_year, end_year + 1)}
+    for year in range(start_year, end_year + 1):
+        year_dir = raw_dir / str(year)
+        if year_dir.is_dir():
+            counts[year] = len(list(year_dir.glob("*.phantom.json")))
+    return counts
+
+
+# --- manifests: what a complete year is supposed to contain -----------------
+
+MANIFEST_DIR_NAME = "_manifests"
+"""Manifests live OUTSIDE the per-year directories on purpose.
+
+A manifest inside `{year}/` would be picked up by the `*.json` glob and counted
+as a phantom marker, inflating the very number the coverage check reads.
+"""
+
+
+def manifest_path(raw_dir: Path, year: int) -> Path:
+    return raw_dir / MANIFEST_DIR_NAME / f"{year}.json"
+
+
+def write_manifest(raw_dir: Path, year: int, expected_packages: list[str]) -> None:
+    """Record how many CREC days `year` is supposed to have.
+
+    Written by fetch_congress_govinfo as soon as the sitemap resolves and
+    clears its floor -- BEFORE any day is downloaded. That ordering is the
+    point: an interrupted year then leaves a manifest saying 150 next to 40
+    cached days, which is exactly the discrepancy the coverage gate exists to
+    see. A manifest written at the END would be absent after an interruption,
+    and absence is indistinguishable from "never started".
+    """
+    path = manifest_path(raw_dir, year)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(
+        json.dumps(
+            {
+                "year": year,
+                "expected_days": len(expected_packages),
+                "packages": sorted(expected_packages),
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    tmp.replace(path)
+
+
+def read_manifest(raw_dir: Path, year: int) -> dict | None:
+    """The year's manifest, or None if it was never written or is unreadable."""
+    path = manifest_path(raw_dir, year)
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) and "expected_days" in payload else None
+
+
+class YearCoverage(NamedTuple):
+    """How much of a year is actually on disk, against how much should be."""
+
+    year: int
+    expected: int | None  # None when no manifest was ever written
+    fetched: int
+    phantom: int
+
+    @property
+    def accounted(self) -> int:
+        """Days resolved either way: downloaded, or proven not to exist."""
+        return self.fetched + self.phantom
+
+    @property
+    def complete(self) -> bool:
+        if self.expected is None:
+            return False
+        if self.expected < MIN_REAL_DAYS_PER_YEAR:
+            # A manifest claiming a handful of days for a full Senate year is
+            # itself the symptom -- the sitemap served an error page. Believing
+            # it would let a 3-day year certify as "fully covered".
+            return False
+        if self.phantom > self.expected * MAX_PHANTOM_SHARE:
+            # Without this, phantoms alone satisfy the manifest and a year that
+            # 404'd on every single request certifies as fully covered.
+            # fetch_congress_govinfo's own rate gate should abort long before
+            # committing markers at this density, but the build side must not
+            # depend on the fetch side having been the one to notice.
+            return False
+        return self.accounted >= self.expected
+
+    def describe(self) -> str:
+        if self.expected is None:
+            return f"{self.year}: no manifest (fetch never ran for this year)"
+        return (
+            f"{self.year}: {self.accounted}/{self.expected} days accounted "
+            f"({self.fetched} fetched + {self.phantom} phantom)"
+        )
+
+
+def coverage_report(
+    raw_dir: Path, start_year: int, end_year: int
+) -> dict[int, YearCoverage]:
+    """Per-year coverage against each year's manifest."""
+    fetched = real_day_counts(raw_dir, start_year, end_year)
+    phantom = phantom_counts(raw_dir, start_year, end_year)
+    report = {}
+    for year in range(start_year, end_year + 1):
+        manifest = read_manifest(raw_dir, year)
+        report[year] = YearCoverage(
+            year=year,
+            expected=manifest["expected_days"] if manifest else None,
+            fetched=fetched[year],
+            phantom=phantom[year],
+        )
+    return report
+
+
+def govinfo_range_usable(
+    raw_dir: Path, start_year: int, end_year: int
+) -> tuple[bool, list[int]]:
+    """True only if EVERY year in the range is fully accounted for.
+
+    Coverage, not presence, and not a flat day floor either. A flat floor is a
+    "did the fetch start" tripwire: it is fine for a build that just wants less
+    data, but it is useless for the splice calibration, where the ratio between
+    the two corpora is directly proportional to how much of each was
+    downloaded. Measured: a GovInfo overlap fetched uniformly at 25 days/year
+    (a real Senate year runs ~150) clears a 20-day floor while its china counts
+    are a fraction of a percent of a complete Gentzkow half -- mean_ratio
+    0.00125, cv 0.00000, verdict `scale`. The gate does not merely fail to
+    fire; it certifies an 800x step at exactly 2017 with maximum confidence.
+
+    The only thing that knows how much a year should hold is the sitemap, so
+    the fetcher records it in a manifest and this gate reads it back. That
+    keeps build() a pure offline transform -- no network call -- while still
+    measuring against truth rather than a guess.
+
+    Returns (usable, sorted list of years that are missing, short, or
+    unmanifested).
+    """
+    report = coverage_report(raw_dir, start_year, end_year)
+    bad_years = sorted(year for year, cov in report.items() if not cov.complete)
     return not bad_years, bad_years

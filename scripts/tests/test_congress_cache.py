@@ -17,10 +17,15 @@ import pytest
 
 from congress_cache import (
     MIN_REAL_DAYS_PER_YEAR,
+    coverage_report,
     govinfo_range_usable,
     iter_govinfo_days,
+    read_manifest,
     real_day_counts,
+    write_manifest,
 )
+
+SESSION_DAYS = 30  # stands in for a full Senate year (~150); kept small for test speed
 
 
 def _write_day(root, year, pkg, granules):
@@ -119,6 +124,17 @@ def test_days_are_walked_in_stable_page_order(tmp_path):
 # --- completeness, not presence -------------------------------------------
 
 
+def _fetch_year(root, year, expected=SESSION_DAYS, fetched=None, phantom=0):
+    """Simulate a fetch: manifest written first, then some days land."""
+    packages = [f"CREC-{year}-{i:03d}" for i in range(expected)]
+    write_manifest(root, year, packages)
+    fetched = expected - phantom if fetched is None else fetched
+    for pkg in packages[:fetched]:
+        _write_day(root, year, pkg, [{"text": "china"}])
+    for pkg in packages[fetched:fetched + phantom]:
+        _write_phantom(root, year, pkg)
+
+
 def test_one_cached_day_is_not_a_usable_year(tmp_path):
     """C1. build_congress_companions._govinfo_years_present returned True for a
     single leftover smoke-test day and build() then wrote a validator-clean
@@ -131,43 +147,122 @@ def test_one_cached_day_is_not_a_usable_year(tmp_path):
     assert 2023 in bad_years
 
 
-def test_range_is_usable_only_when_every_year_clears_the_floor(tmp_path):
+def test_a_fully_fetched_range_is_usable(tmp_path):
     for year in range(2017, 2025):
-        for i in range(MIN_REAL_DAYS_PER_YEAR):
-            _write_day(tmp_path, year, f"CREC-{year}-{i:03d}", [{"text": "china"}])
-    usable, bad_years = govinfo_range_usable(tmp_path, 2017, 2024)
-    assert usable is True
-    assert bad_years == []
+        _fetch_year(tmp_path, year)
+    assert govinfo_range_usable(tmp_path, 2017, 2024) == (True, [])
 
 
-def test_a_single_short_year_fails_the_whole_range(tmp_path):
-    """An interrupted fetch is the likeliest outcome of a 110k-request job, and
-    it does not fail uniformly -- it stops partway through one year."""
-    for year in range(2017, 2025):
-        n = MIN_REAL_DAYS_PER_YEAR if year != 2021 else MIN_REAL_DAYS_PER_YEAR - 1
-        for i in range(n):
-            _write_day(tmp_path, year, f"CREC-{year}-{i:03d}", [{"text": "china"}])
-    usable, bad_years = govinfo_range_usable(tmp_path, 2017, 2024)
-    assert usable is False
-    assert bad_years == [2021]
+def test_a_year_fetched_well_above_a_flat_floor_but_far_short_of_its_manifest_fails(
+    tmp_path,
+):
+    """THE KILL ZONE. This is the case a flat MIN_REAL_DAYS_PER_YEAR floor let
+    through, and it is the one that actually ships a wrong headline finding.
 
+    The fixture is scaled down for speed (SESSION_DAYS stands in for ~150), but
+    the shape is the measured one: at 25 real days against a full Senate year,
+    a flat 20-day tripwire passes while the china counts are a fraction of a
+    percent of a complete Gentzkow half -- mean_ratio 0.00125, cv 0.00000. So
+    choose_strategy does not merely fail to reject it, it CERTIFIES a `scale`
+    join with maximum confidence and manufactures an 800x step at exactly 2017,
+    which is exactly where Beat 1's headline claim lives.
 
-def test_missing_year_directory_is_a_bad_year(tmp_path):
-    for i in range(MIN_REAL_DAYS_PER_YEAR):
-        _write_day(tmp_path, 2017, f"CREC-2017-{i:03d}", [{"text": "china"}])
-    usable, bad_years = govinfo_range_usable(tmp_path, 2017, 2018)
-    assert usable is False
-    assert bad_years == [2018]
-
-
-def test_phantom_markers_do_not_count_toward_the_real_day_floor(tmp_path):
-    """A year that 404'd every day would otherwise look complete."""
-    for i in range(MIN_REAL_DAYS_PER_YEAR):
-        _write_phantom(tmp_path, 2017, f"CREC-2017-{i:03d}")
+    Only the manifest can see this. Nothing about the cached days themselves
+    looks wrong; the discrepancy is between what is on disk and what the
+    sitemap said should be.
+    """
+    _fetch_year(tmp_path, 2017, expected=SESSION_DAYS, fetched=25)
     usable, bad_years = govinfo_range_usable(tmp_path, 2017, 2017)
     assert usable is False
     assert bad_years == [2017]
-    assert real_day_counts(tmp_path, 2017, 2017) == {2017: 0}
+    assert 25 > MIN_REAL_DAYS_PER_YEAR, "fixture no longer exercises the kill zone"
+
+
+def test_a_uniformly_partial_range_fails_every_year(tmp_path):
+    """An interrupted bulk pull is uniform, which is what makes it dangerous."""
+    for year in range(2017, 2025):
+        _fetch_year(tmp_path, year, expected=SESSION_DAYS, fetched=25)
+    usable, bad_years = govinfo_range_usable(tmp_path, 2017, 2024)
+    assert usable is False
+    assert bad_years == list(range(2017, 2025))
+
+
+def test_a_single_short_year_fails_the_whole_range(tmp_path):
+    for year in range(2017, 2025):
+        _fetch_year(tmp_path, year, fetched=SESSION_DAYS if year != 2021 else 28)
+    assert govinfo_range_usable(tmp_path, 2017, 2024) == (False, [2021])
+
+
+def test_phantom_days_count_as_accounted_for(tmp_path):
+    """A phantom day is absent from GovInfo, not missing from our cache. The
+    real 2023 rate is ~1.4%, so treating phantoms as a shortfall would make
+    every year permanently incomplete."""
+    _fetch_year(tmp_path, 2017, expected=SESSION_DAYS, fetched=28, phantom=2)
+    assert govinfo_range_usable(tmp_path, 2017, 2017) == (True, [])
+
+
+def test_an_all_phantom_year_is_not_complete(tmp_path):
+    """The opposite pressure: if phantoms alone could satisfy a manifest, a
+    year that 404'd on every request would certify as fully covered."""
+    _fetch_year(tmp_path, 2017, expected=SESSION_DAYS, fetched=0, phantom=SESSION_DAYS)
+    usable, bad_years = govinfo_range_usable(tmp_path, 2017, 2017)
+    assert usable is False
+    assert bad_years == [2017]
+
+
+def test_a_year_with_no_manifest_is_never_complete(tmp_path):
+    """No manifest means nothing knows how much this year should hold. That is
+    a refusal, not a pass -- the pre-manifest cache in this worktree must not
+    silently certify."""
+    for i in range(SESSION_DAYS):
+        _write_day(tmp_path, 2017, f"CREC-2017-{i:03d}", [{"text": "china"}])
+    assert govinfo_range_usable(tmp_path, 2017, 2017) == (False, [2017])
+
+
+def test_an_implausibly_small_manifest_is_not_believed(tmp_path):
+    """A manifest claiming 3 days for a full Senate year is itself the symptom
+    -- the sitemap served an error page. Believing it lets a 3-day year
+    certify as fully covered."""
+    _fetch_year(tmp_path, 2017, expected=3)
+    assert govinfo_range_usable(tmp_path, 2017, 2017) == (False, [2017])
+
+
+def test_missing_year_directory_is_a_bad_year(tmp_path):
+    _fetch_year(tmp_path, 2017)
+    assert govinfo_range_usable(tmp_path, 2017, 2018) == (False, [2018])
+
+
+def test_the_manifest_lives_outside_the_year_directories(tmp_path):
+    """A manifest inside {year}/ would be swept up by the *.json glob and
+    counted as a phantom marker -- inflating the very number the coverage
+    check reads."""
+    _fetch_year(tmp_path, 2017, expected=SESSION_DAYS, fetched=SESSION_DAYS)
+    assert real_day_counts(tmp_path, 2017, 2017) == {2017: SESSION_DAYS}
+    _, skips = _drain(tmp_path, 2017, 2017)
+    assert skips == {}
+
+
+def test_manifest_roundtrips(tmp_path):
+    write_manifest(tmp_path, 2017, ["CREC-2017-b", "CREC-2017-a"])
+    manifest = read_manifest(tmp_path, 2017)
+    assert manifest["expected_days"] == 2
+    assert manifest["packages"] == ["CREC-2017-a", "CREC-2017-b"]
+
+
+def test_a_corrupt_manifest_reads_as_absent_not_as_zero(tmp_path):
+    """expected_days defaulting to 0 would make every year trivially complete."""
+    _fetch_year(tmp_path, 2017)
+    (tmp_path / "_manifests" / "2017.json").write_text("{trunc", encoding="utf-8")
+    assert read_manifest(tmp_path, 2017) is None
+    assert govinfo_range_usable(tmp_path, 2017, 2017) == (False, [2017])
+
+
+def test_coverage_report_shows_the_shortfall(tmp_path):
+    _fetch_year(tmp_path, 2017, expected=SESSION_DAYS, fetched=22, phantom=1)
+    cov = coverage_report(tmp_path, 2017, 2017)[2017]
+    assert (cov.expected, cov.fetched, cov.phantom, cov.accounted) == (30, 22, 1, 23)
+    assert cov.complete is False
+    assert "23/30" in cov.describe()
 
 
 def test_real_day_counts_reports_every_year_in_range(tmp_path):
@@ -176,12 +271,6 @@ def test_real_day_counts_reports_every_year_in_range(tmp_path):
     assert real_day_counts(tmp_path, 2017, 2019) == {2017: 0, 2018: 1, 2019: 0}
 
 
-def test_caller_may_override_the_floor(tmp_path):
-    _write_day(tmp_path, 2017, "CREC-2017-01-03", [{"text": "china"}])
-    assert govinfo_range_usable(tmp_path, 2017, 2017, min_days=1) == (True, [])
-    assert govinfo_range_usable(tmp_path, 2017, 2017, min_days=2) == (False, [2017])
-
-
 def test_min_days_floor_is_not_silently_zero():
-    """min_days=0 would make every range usable, including an empty cache."""
+    """Used as a plausibility bound on the manifest itself."""
     assert MIN_REAL_DAYS_PER_YEAR >= 20
