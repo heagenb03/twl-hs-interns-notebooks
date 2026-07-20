@@ -92,6 +92,23 @@ def test_genuine_empty_success_returns_empty_list_without_raising(monkeypatch, n
     assert no_sleep == []
 
 
+def test_null_title_from_gdelt_does_not_raise_attributeerror(monkeypatch, no_sleep):
+    """Minor fix: GDELT can return "title": null. `a.get("title", "").strip()`
+    only substitutes the default when the key is ABSENT, not when it's
+    present with value None -- so a null title raised AttributeError on
+    .strip(). Must degrade to an empty string instead."""
+    body = json.dumps({"articles": [
+        {"title": None, "url": "http://x", "domain": "nytimes.com", "seendate": "20200115"}
+    ]})
+    monkeypatch.setattr(fh.requests, "get", lambda *a, **k: FakeResponse(200, body))
+
+    result = fh.fetch_one("NYT", "2020-01-15", "2020-01-22")
+
+    assert result == [
+        {"title": "", "url": "http://x", "domain": "nytimes.com", "seendate": "20200115"}
+    ]
+
+
 def test_fetch_all_skips_cached_ok_cell_and_leaves_it_untouched(monkeypatch):
     event = "Test Event"
     outlet = "NYT"
@@ -359,6 +376,95 @@ def test_main_returns_1_when_any_cell_ends_in_error_status(monkeypatch, tmp_path
     monkeypatch.setattr(fh, "fetch_all", fake_fetch_all)
 
     assert fh.main() == 1
+
+
+def test_main_banner_does_not_count_ok_status_with_missing_data_as_cached(monkeypatch, tmp_path, capsys):
+    """Minor fix: n_cached_ok counted status=="ok" without the matching
+    data-presence check that fetch_all's actual skip-check applies, so a
+    desynced cell (status "ok" but no data) was counted as already cached --
+    inflating n_cached_ok and making the 'fetching N of M' banner under-
+    report how much work fetch_all will actually do (it re-fetches that
+    cell, matching the skip-check)."""
+    monkeypatch.setattr(sys, "argv", ["fetch_headlines.py"])
+    monkeypatch.setattr(fh, "RAW_DIR", tmp_path)
+    monkeypatch.setattr(fh, "RAW_PATH", tmp_path / "headlines_gdelt.json")
+    monkeypatch.setattr(fh, "STATUS_PATH", tmp_path / "headlines_gdelt_status.json")
+
+    # Every cell marked "ok" in status, but ONE cell (first event/outlet) has
+    # no matching data -- a desynced cache.
+    desynced_event, _, _ = fh.EVENTS[0]
+    desynced_outlet = next(iter(fh.OUTLET_DOMAINS))
+    data = {
+        event: {outlet: [{"title": "x"}] for outlet in fh.OUTLET_DOMAINS}
+        for event, _, _ in fh.EVENTS
+    }
+    data[desynced_event].pop(desynced_outlet)
+    status = {
+        event: {outlet: "ok" for outlet in fh.OUTLET_DOMAINS}
+        for event, _, _ in fh.EVENTS
+    }
+    fh.RAW_PATH.write_text(json.dumps(data), encoding="utf-8")
+    fh.STATUS_PATH.write_text(json.dumps(status), encoding="utf-8")
+
+    monkeypatch.setattr(fh, "fetch_all", lambda d, s, r, events=fh.EVENTS, outlets=None: (d, s))
+
+    fh.main()
+
+    out = capsys.readouterr().out
+    assert "fetching 1 of" in out, (
+        "the desynced cell (status ok, no data) must be counted as needing "
+        "a fetch, matching fetch_all's actual skip condition"
+    )
+
+
+def test_main_refresh_preserves_cached_data_when_a_cell_fails_to_refetch(monkeypatch, tmp_path):
+    """Finding 1: --refresh must not be destructive.
+
+    main() used to reset `data = {}` on --refresh, so the first per-event
+    _write_cache call (after event 1) atomically overwrote RAW_PATH with
+    only event 1's data -- destroying every other event's previously-cached
+    articles before they were re-fetched. A cell that then fails to
+    re-fetch had no fallback left: the old, good data was already gone.
+
+    This test seeds RAW_PATH/STATUS_PATH with real cached articles for every
+    cell, runs `main()` with --refresh, and makes ONE cell's re-fetch fail.
+    That cell's previously-cached articles must survive on disk.
+    """
+    monkeypatch.setattr(sys, "argv", ["fetch_headlines.py", "--refresh"])
+    monkeypatch.setattr(fh, "RAW_DIR", tmp_path)
+    monkeypatch.setattr(fh, "RAW_PATH", tmp_path / "headlines_gdelt.json")
+    monkeypatch.setattr(fh, "STATUS_PATH", tmp_path / "headlines_gdelt_status.json")
+    monkeypatch.setattr(fh.time, "sleep", lambda s: None)
+
+    failing_event, failing_start, failing_end = fh.EVENTS[1]
+    failing_outlet = next(iter(fh.OUTLET_DOMAINS))
+
+    old_articles = [{"title": "old-cached-article"}]
+    pre_existing_data = {
+        event: {outlet: old_articles for outlet in fh.OUTLET_DOMAINS}
+        for event, _, _ in fh.EVENTS
+    }
+    pre_existing_status = {
+        event: {outlet: "ok" for outlet in fh.OUTLET_DOMAINS}
+        for event, _, _ in fh.EVENTS
+    }
+    fh.RAW_PATH.write_text(json.dumps(pre_existing_data), encoding="utf-8")
+    fh.STATUS_PATH.write_text(json.dumps(pre_existing_status), encoding="utf-8")
+
+    def fake_fetch_one(outlet: str, start: str, end: str) -> list[dict]:
+        if outlet == failing_outlet and start == failing_start and end == failing_end:
+            raise RuntimeError("simulated throttle on refetch")
+        return [{"title": f"fresh-{outlet}-{start}"}]
+
+    monkeypatch.setattr(fh, "fetch_one", fake_fetch_one)
+
+    fh.main()
+
+    on_disk_data = json.loads(fh.RAW_PATH.read_text(encoding="utf-8"))
+    assert on_disk_data[failing_event][failing_outlet] == old_articles, (
+        "the failing cell's previously-cached articles must survive --refresh, "
+        "not be silently destroyed before the re-fetch attempt"
+    )
 
 
 def test_main_returns_0_when_every_cell_ok_including_legitimate_empty(monkeypatch, tmp_path):

@@ -13,8 +13,10 @@ from pathlib import Path
 
 import pandas as pd
 
-from fetch_headlines import EVENTS, OUTLET_DOMAINS
 from twl_common import DATA_DIR, RAW_DIR
+from twl_common import HEADLINE_EVENTS as EVENTS
+from twl_common import OUTLET_DOMAINS
+from validate_data import validate_headlines
 
 RAW_PATH = RAW_DIR / "headlines_gdelt.json"
 OUT_PATH = DATA_DIR / "headlines_real.csv"
@@ -37,6 +39,9 @@ _SUFFIX = re.compile(
 # signal.
 _SPACE_BEFORE_PUNCT = re.compile(r"\s+([,.;:!?%])")
 _TOKENIZED_HYPHEN = re.compile(r"(?<=\w) - (?=\w)")
+# Defensive: GDELT strips apostrophes upstream in practice, so this never
+# fires against the real feed (the output CSV has zero apostrophes). Kept in
+# case that changes; do not assume it is load-bearing.
 _TOKENIZED_POSSESSIVE = re.compile(r"\s+'s\b")
 
 # GDELT also leaves the tokenizer space AFTER a period between initials
@@ -64,7 +69,7 @@ _TOKENIZED_INITIALS = re.compile(r"(?<![A-Za-z])([A-Z])\.\s+(?=[A-Z]\.)")
 # HEADLINE removes that confound.
 TOPIC_PATTERN = re.compile(
     r"china|chinese|beijing|xi jinping|tariff|trade war|trade deal|huawei|tiktok"
-    r"|yuan|hong kong|xinjiang|taiwan|phase one|spy balloon|wto",
+    r"|\byuan\b|hong kong|xinjiang|taiwan|phase one|spy balloon|\bwto\b",
     flags=re.IGNORECASE,
 )
 
@@ -117,23 +122,42 @@ def build_frame(raw: dict) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["event", "outlet", "headline"])
 
 
-def build(raw_path: Path = RAW_PATH, out_path: Path = OUT_PATH) -> pd.DataFrame:
+def build(raw_path: Path = RAW_PATH, out_path: Path = OUT_PATH) -> tuple[pd.DataFrame, list[str]]:
+    """Build the frame from the raw cache, validate it, then write the CSV.
+
+    Validation runs BEFORE the write: a frame that violates a load-bearing
+    invariant (e.g. the third distinct event isn't "Phase One deal") must
+    never reach disk. Returns (frame, problems); `problems` is empty on
+    success. The caller (main()) is responsible for turning a non-empty
+    `problems` into a non-zero exit code.
+    """
     raw = json.loads(raw_path.read_text(encoding="utf-8"))
     frame = build_frame(raw)
-    frame.to_csv(out_path, index=False, encoding="utf-8")
-    return frame
+    problems = validate_headlines(frame)
+    if not problems:
+        frame.to_csv(out_path, index=False, encoding="utf-8")
+    return frame, problems
 
 
 def main() -> int:
     if not RAW_PATH.exists():
         print(f"missing {RAW_PATH} — run: python scripts/fetch_headlines.py")
         return 1
-    frame = build()
+    frame, problems = build()
+    if problems:
+        print(f"FAIL: refusing to write {OUT_PATH} -- validation problem(s):")
+        for problem in problems:
+            print(f"  - {problem}")
+        return 1
     print(f"wrote {OUT_PATH}  rows={len(frame)}")
     print("\nrows per event x outlet:")
     print(frame.groupby(["event", "outlet"]).size().unstack(fill_value=0).to_string())
-    print(f"\nevent order: {list(frame.event.unique())}")
-    print(f"unique()[2] == {list(frame.event.unique())[2]!r} (must be 'Phase One deal')")
+    order = list(frame.event.unique())
+    print(f"\nevent order: {order}")
+    # Safe by construction: validate_headlines() above already guarantees at
+    # least 3 distinct events when problems is empty, so order[2] cannot
+    # IndexError here.
+    print(f"unique()[2] == {order[2]!r} (must be 'Phase One deal')")
     return 0
 
 

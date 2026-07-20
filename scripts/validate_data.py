@@ -10,8 +10,7 @@ import sys
 
 import pandas as pd
 
-from twl_common import DATA_DIR
-from fetch_headlines import EVENTS as HEADLINE_EVENTS, OUTLET_DOMAINS
+from twl_common import DATA_DIR, HEADLINE_EVENTS, OUTLET_DOMAINS
 
 
 def validate_headlines(
@@ -82,29 +81,35 @@ def validate_headlines(
 
 
 def main() -> int:
-    checks: list[tuple[str, list[str]]] = []
-
-    # Later plans append tariff and congress checks here.
+    # (name, found, problems) -- found=False means the expected file is
+    # absent, which is legitimate before it's been built (exit stays 0), but
+    # must be printed as an explicit SKIP rather than silently vanishing
+    # from the check list.
+    checks: list[tuple[str, bool, list[str]]] = []
 
     synthetic_path = DATA_DIR / "headlines.csv"
     if synthetic_path.exists():
         df = pd.read_csv(synthetic_path)
         checks.append(
-            ("headlines.csv", validate_headlines(df, require_all_outlets=True))
+            ("headlines.csv", True, validate_headlines(df, require_all_outlets=True))
         )
+    else:
+        checks.append(("headlines.csv", False, []))
 
     real_path = DATA_DIR / "headlines_real.csv"
     if real_path.exists():
         df = pd.read_csv(real_path)
-        checks.append(("headlines_real.csv", validate_headlines(df)))
+        checks.append(("headlines_real.csv", True, validate_headlines(df)))
+    else:
+        checks.append(("headlines_real.csv", False, []))
 
-    if not checks:
-        print("No data files found to validate.")
-        return 0
+    # Later plans append tariff and congress checks here.
 
     any_problems = False
-    for name, problems in checks:
-        if problems:
+    for name, found, problems in checks:
+        if not found:
+            print(f"SKIP {name} (not found)")
+        elif problems:
             any_problems = True
             print(f"FAIL {name}")
             for problem in problems:

@@ -6,9 +6,12 @@ Run once; build_headlines.py consumes the cache offline.
     python scripts/fetch_headlines.py [--refresh]
 
 Resumable by default: re-runs only fetch cells that are missing or previously
-errored, merging into the existing cache. Pass --refresh to re-fetch every
-cell from scratch. Cache is written incrementally (after each event), so an
-interrupted run never loses completed work.
+errored, merging into the existing cache. Pass --refresh to force every cell
+to be re-fetched -- but this is non-destructive: the existing cache stays
+loaded in memory as the on-error fallback, so a cell that fails to re-fetch
+keeps its previously-cached articles instead of losing them. Cache is
+written incrementally (after each event), so an interrupted run never loses
+completed work, on --refresh or otherwise.
 
 GDELT notes, all verified 2026-07-19:
   * Coverage starts 2017-01-01. The launch blog's "last 3 months" limit is
@@ -39,6 +42,8 @@ from pathlib import Path
 import requests
 
 from twl_common import RAW_DIR
+from twl_common import HEADLINE_EVENTS as EVENTS
+from twl_common import OUTLET_DOMAINS
 
 API = "https://api.gdeltproject.org/api/v2/doc/doc"
 RAW_PATH = RAW_DIR / "headlines_gdelt.json"
@@ -58,23 +63,9 @@ assert len(RETRY_DELAYS) == MAX_ATTEMPTS - 1, (
     "would IndexError at runtime in fetch_one"
 )
 
-# Order matters: it becomes CSV row order, and the notebook relies on
-# unique()[2] == "Phase One deal".
-EVENTS: tuple[tuple[str, str, str], ...] = (
-    ("2018 tariff announcement", "2018-03-22", "2018-03-29"),
-    ("Huawei CFO arrest", "2018-12-05", "2018-12-12"),
-    ("Phase One deal", "2020-01-15", "2020-01-22"),
-    ("Hong Kong security law", "2020-06-30", "2020-07-07"),
-    ("TikTok ban push", "2020-08-06", "2020-08-13"),
-    ("Spy balloon", "2023-02-04", "2023-02-11"),
-)
-
-OUTLET_DOMAINS: dict[str, str] = {
-    "NYT": "nytimes.com",
-    "WSJ": "wsj.com",
-    "Fox": "foxnews.com",
-    "Xinhua": "xinhuanet.com",
-}
+# EVENTS and OUTLET_DOMAINS live in twl_common.py (re-exported here for
+# backwards compatibility) so the offline modules (build_headlines,
+# validate_data) can use them without pulling in `requests` transitively.
 
 QUERY_TERMS = "(china OR chinese)"
 
@@ -105,10 +96,16 @@ def _attempt_fetch(outlet: str, start: str, params: dict) -> list[dict]:
     articles = resp.json().get("articles", [])
     return [
         {
-            "title": a.get("title", "").strip(),
-            "url": a.get("url", ""),
-            "domain": a.get("domain", ""),
-            "seendate": a.get("seendate", ""),
+            # `.get(key, default)` only substitutes the default when the key
+            # is ABSENT, not when it's present with value None -- and GDELT
+            # can return "title": null. `(a.get(key) or "")` degrades both
+            # "absent" and "present but null" to "", so .strip() never sees
+            # None. Applied to all four fields for consistency, even though
+            # only "title" currently has a method called on it.
+            "title": (a.get("title") or "").strip(),
+            "url": a.get("url") or "",
+            "domain": a.get("domain") or "",
+            "seendate": a.get("seendate") or "",
         }
         for a in articles
     ]
@@ -252,19 +249,29 @@ def main() -> int:
 
     RAW_DIR.mkdir(parents=True, exist_ok=True)
 
-    if args.refresh:
-        data: dict[str, dict[str, list[dict]]] = {}
-        status: dict[str, dict[str, str]] = {}
-    else:
-        data = _load_json(RAW_PATH)
-        status = _load_json(STATUS_PATH)
+    # --refresh resets only `status`, forcing every cell to be re-fetched
+    # (fetch_all skips a cell only when its status is "ok"). `data` is always
+    # loaded from the existing cache and kept in memory as the on-error
+    # fallback -- NOT reset to {} -- so a cell that fails to re-fetch still
+    # has its previously-cached articles to fall back on (see the "keep
+    # cached data on error" branch in fetch_all). Resetting `data` here would
+    # let the first per-event _write_cache call atomically overwrite the on-
+    # disk cache with only the first event's data, destroying every other
+    # event's cached articles before they were re-fetched.
+    data = _load_json(RAW_PATH)
+    status = {} if args.refresh else _load_json(STATUS_PATH)
 
     n_total = len(EVENTS) * len(OUTLET_DOMAINS)
+    # Mirror fetch_all's actual skip-check: a cell is only "already cached"
+    # if its status is "ok" AND matching data actually exists. A desynced
+    # cell (status "ok" but no data) is re-fetched by fetch_all, so it must
+    # not be counted here either -- otherwise this banner under-reports how
+    # much work fetch_all will actually do.
     n_cached_ok = sum(
         1
         for event, _, _ in EVENTS
         for outlet in OUTLET_DOMAINS
-        if status.get(event, {}).get(outlet) == "ok"
+        if status.get(event, {}).get(outlet) == "ok" and outlet in data.get(event, {})
     )
     n_to_fetch = n_total if args.refresh else n_total - n_cached_ok
     print(

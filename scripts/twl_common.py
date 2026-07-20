@@ -1,6 +1,8 @@
 """Shared helpers for the TWL intern-notebook data pipeline.
 
-Imported by fetch_*, build_*, validate_data, and print_anchors.
+Imported by fetch_*, build_*, and validate_data. Deliberately pandas-only
+(no `requests`) so the offline modules (build_*, validate_data) never pull
+the network stage's dependency in transitively.
 """
 from __future__ import annotations
 
@@ -13,6 +15,24 @@ DATA_DIR: Path = REPO_ROOT / "data"
 RAW_DIR: Path = DATA_DIR / "_raw"
 
 EXPECTED_TICKERS: tuple[str, ...] = ("SPY", "FXI", "BA", "CAT", "SOYB", "AAPL")
+
+# Order matters: it becomes CSV row order, and the notebook relies on
+# unique()[2] == "Phase One deal".
+HEADLINE_EVENTS: tuple[tuple[str, str, str], ...] = (
+    ("2018 tariff announcement", "2018-03-22", "2018-03-29"),
+    ("Huawei CFO arrest", "2018-12-05", "2018-12-12"),
+    ("Phase One deal", "2020-01-15", "2020-01-22"),
+    ("Hong Kong security law", "2020-06-30", "2020-07-07"),
+    ("TikTok ban push", "2020-08-06", "2020-08-13"),
+    ("Spy balloon", "2023-02-04", "2023-02-11"),
+)
+
+OUTLET_DOMAINS: dict[str, str] = {
+    "NYT": "nytimes.com",
+    "WSJ": "wsj.com",
+    "Fox": "foxnews.com",
+    "Xinhua": "xinhuanet.com",
+}
 
 # The six real trade-war announcement dates. Labels live in the notebook, not here.
 EVENT_DATES: tuple[str, ...] = (

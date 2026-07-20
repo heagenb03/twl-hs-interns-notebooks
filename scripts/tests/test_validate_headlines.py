@@ -1,6 +1,7 @@
 import pandas as pd
 import pytest
 
+import validate_data as vd
 from validate_data import validate_headlines
 
 
@@ -48,7 +49,6 @@ def test_phase_one_must_be_the_third_distinct_event(good):
 
 
 def test_outlet_below_stratify_floor_is_reported(good):
-    broken = good[~((good.outlet == "WSJ") & (good.index > 5))]
     broken = pd.concat([good[good.outlet != "WSJ"],
                         good[good.outlet == "WSJ"].head(1)])
     problems = validate_headlines(broken)
@@ -77,3 +77,31 @@ def test_missing_outlet_reported_when_required(good):
     thin = good[good.outlet != "Xinhua"]
     problems = validate_headlines(thin, require_all_outlets=True)
     assert any("Xinhua" in p for p in problems)
+
+
+def test_main_prints_explicit_skip_for_a_missing_expected_file(monkeypatch, tmp_path, capsys, good):
+    """Finding 4: a missing headlines_real.csv must be visibly SKIPped, not
+    silently omitted from the check list while the run still exits 0 and
+    prints only 'OK headlines.csv' with no sign the real file was never
+    examined."""
+    monkeypatch.setattr(vd, "DATA_DIR", tmp_path)
+    good.to_csv(tmp_path / "headlines.csv", index=False)
+    # headlines_real.csv deliberately absent.
+
+    exit_code = vd.main()
+
+    out = capsys.readouterr().out
+    assert exit_code == 0, "absence of a not-yet-built file is legitimate; exit must stay 0"
+    assert "SKIP headlines_real.csv (not found)" in out
+    assert "OK   headlines.csv" in out
+
+
+def test_main_skips_both_files_visibly_when_neither_exists(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(vd, "DATA_DIR", tmp_path)
+
+    exit_code = vd.main()
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "SKIP headlines.csv (not found)" in out
+    assert "SKIP headlines_real.csv (not found)" in out
