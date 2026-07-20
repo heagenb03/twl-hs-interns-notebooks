@@ -2,6 +2,7 @@
 import pandas as pd
 import pytest
 
+from build_congress_companions import build_companions_frame
 from build_congress_mentions import build_mentions_frame
 
 
@@ -36,3 +37,42 @@ def test_zero_japan_raises():
     counts[1999]["japan"] = 0
     with pytest.raises(ValueError, match="japan"):
         build_mentions_frame(counts)
+
+
+FILLER = ["alpha", "bravo", "charlie", "delta", "echo",
+          "foxtrot", "golf", "hotel", "india", "juliet", "kilo"]
+
+
+def _segments() -> dict[str, list[str]]:
+    return {
+        "1990s": [f"China trade {w} " * (12 - i) for i, w in enumerate(FILLER)],
+        "2000s": [f"China currency {w} " * (12 - i) for i, w in enumerate(FILLER)],
+        "2010s": [f"China cyber {w} " * (12 - i) for i, w in enumerate(FILLER)],
+        "2020s": [f"China semiconductors {w} " * (12 - i) for i, w in enumerate(FILLER)],
+    }
+
+
+def test_exactly_ten_words_per_era():
+    df = build_companions_frame(_segments())
+    assert list(df.columns) == ["era", "word", "count"]
+    for era in ("1990s", "2000s", "2010s", "2020s"):
+        assert (df.era == era).sum() == 10
+
+
+def test_china_is_never_its_own_companion():
+    df = build_companions_frame(_segments())
+    assert "china" not in set(df.word)
+
+
+def test_words_may_repeat_across_eras():
+    # Unlike the synthetic file, real data will repeat 'trade' and 'taiwan'.
+    # Beat 2 compares top-threes and still works with overlap.
+    df = build_companions_frame(_segments())
+    assert len(df) == 40
+
+
+def test_era_with_too_few_distinct_words_raises():
+    segments = _segments()
+    segments["1990s"] = ["China trade"]
+    with pytest.raises(ValueError, match="1990s"):
+        build_companions_frame(segments)
