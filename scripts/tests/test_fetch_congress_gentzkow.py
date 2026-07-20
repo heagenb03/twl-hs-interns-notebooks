@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+import fetch_congress_gentzkow
 from fetch_congress_gentzkow import (
     decode_archive_bytes,
     SENATE_CHAMBER,
@@ -318,3 +319,134 @@ def test_decoding_never_substitutes_the_replacement_character() -> None:
     should decode to U+FFFD -- that is silent, unrecoverable information loss."""
     assert "�" not in decode_archive_bytes("Luj\xe1n".encode("latin-1"))
     assert "�" not in decode_archive_bytes("Luj\xe1n".encode("utf-8"))
+
+
+# --------------------------------------------------------------- C4: atomic write + exit code
+#
+# fetch_congress_gentzkow's sibling, fetch_congress_govinfo, writes via a temp
+# file + os.replace (so a kill mid-write cannot leave a truncated file that
+# exists() reports as complete) and returns 1 on any failed day (so an
+# unattended run that produces nothing does not report success). This module
+# had neither: `out_path.open("w")` truncated and streamed straight to the
+# final path, and main() returned 0 even when the UNVERIFIED archive layout
+# assumption was wrong and zero speeches were extracted across every
+# congress. Consumers glob speeches_senate_*.jsonl and treat presence as
+# completeness, so either gap is invisible downstream. These tests pin the
+# fix to the same pattern govinfo already uses.
+
+
+class _SimulatedKill(Exception):
+    """Stands in for a process kill (OOM-killer, SIGKILL, spot eviction)
+    partway through writing a Congress's speeches. Raised from inside the
+    write loop -- after some rows have already been serialized -- so the
+    only way a test can pass is if the writer never let a caller observe a
+    partial result at the path consumers actually look for.
+    """
+
+
+def _archive_with_three_senate_speeches(tmp_path: Path) -> Path:
+    speeches = [
+        {"speech_id": "1010001", "speech": "first speech, written fine"},
+        {"speech_id": "1010002", "speech": "second speech, kill happens here"},
+        {"speech_id": "1010003", "speech": "third speech, never reached"},
+    ]
+    descr = [
+        {"speech_id": "1010001", "chamber": "S", "date": "19890103"},
+        {"speech_id": "1010002", "chamber": "S", "date": "19890103"},
+        {"speech_id": "1010003", "chamber": "S", "date": "19890103"},
+    ]
+    return _make_archive(tmp_path, "101", speeches, descr, speaker_map=None)
+
+
+def _extract_with_simulated_kill_on_second_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Run extract_congress() on a 3-speech Congress, killing it after the
+    first row is serialized but before the second is. Raises _SimulatedKill
+    out of extract_congress -- callers assert on what's left on disk.
+    """
+    archive = _archive_with_three_senate_speeches(tmp_path)
+    real_dumps = json.dumps
+    calls = {"n": 0}
+
+    def flaky_dumps(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise _SimulatedKill("process killed mid-write")
+        return real_dumps(*args, **kwargs)
+
+    monkeypatch.setattr(fetch_congress_gentzkow.json, "dumps", flaky_dumps)
+
+    with zipfile.ZipFile(archive) as zf:
+        with pytest.raises(_SimulatedKill):
+            extract_congress(zf, "101", tmp_path)
+
+
+def test_interrupted_write_leaves_no_file_at_final_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A write killed mid-stream must not leave a truncated file at the
+    final speeches_senate_101.jsonl path -- only a complete file, or none.
+    """
+    _extract_with_simulated_kill_on_second_row(tmp_path, monkeypatch)
+    assert not (tmp_path / "speeches_senate_101.jsonl").exists()
+
+
+def test_partial_temp_file_not_matched_by_consumer_glob(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Whatever artifact the interrupted write leaves behind on disk (if
+    any), it must not satisfy a downstream consumer's
+    glob("speeches_senate_*.jsonl") presence check -- that check is how
+    build_congress_* decide a Congress's speeches are ready to read.
+    """
+    _extract_with_simulated_kill_on_second_row(tmp_path, monkeypatch)
+    assert list(tmp_path.glob("speeches_senate_*.jsonl")) == []
+
+
+def test_main_returns_nonzero_when_zero_speeches_extracted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+):
+    """If the UNVERIFIED archive layout assumption is wrong, every congress
+    prints a diagnostic and every count comes back zero. main() must not
+    report success in that case -- govinfo's fetcher returns 1 on any failed
+    day for exactly this reason, and this fetcher must match it.
+    """
+    archive = tmp_path / fetch_congress_gentzkow.ARCHIVE_NAME
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("some_unrelated_file.txt", "not a hein-daily table")
+
+    monkeypatch.setattr(
+        fetch_congress_gentzkow, "CONGRESS_RAW_GENTZKOW", tmp_path, raising=False
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        ["fetch_congress_gentzkow.py", "--first-congress", "101", "--last-congress", "102"],
+    )
+
+    rc = fetch_congress_gentzkow.main()
+    assert rc != 0
+    assert "ABORT" in capsys.readouterr().out
+
+
+def test_main_returns_zero_on_successful_extraction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The success path must not regress: a real extraction that writes at
+    least one speech still exits 0.
+    """
+    speeches = [{"speech_id": "1010001", "speech": "remarks"}]
+    descr = [{"speech_id": "1010001", "chamber": "S", "date": "19890103"}]
+    _make_archive(tmp_path, "101", speeches, descr, speaker_map=None)
+
+    monkeypatch.setattr(
+        fetch_congress_gentzkow, "CONGRESS_RAW_GENTZKOW", tmp_path, raising=False
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        ["fetch_congress_gentzkow.py", "--first-congress", "101", "--last-congress", "101"],
+    )
+
+    rc = fetch_congress_gentzkow.main()
+    assert rc == 0
+    assert (tmp_path / "speeches_senate_101.jsonl").exists()

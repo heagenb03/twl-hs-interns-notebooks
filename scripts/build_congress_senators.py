@@ -121,6 +121,68 @@ them inspect specific names. This needs a nickname/middle-initial
 reconciliation pass before the notebook's named lookups will resolve; it is
 out of scope here because Step 5 (the only place it could be observed) is
 not run.
+
+I2 -- the "Senate average" denominator (fixed here, Heagen's decision 2026-07-20)
+-----------------------------------------------------------------------------------
+`govinfo_senator_counts` only ever writes a (bio, year) entry into `counts`
+when that senator's china count for the year is non-zero (`if n:`). Left
+alone, that means `build_senators_frame` -- which used to compute the
+sentinel row as the mean of whatever rows happen to exist -- was silently
+averaging over "senators who said china at least once that year", not over
+"senators serving that year". The published line is labelled "Senate
+average" and Beat 3 teaches interns to read the DISTANCE between one
+senator's line and it; a mean taken over a self-selecting non-zero
+population understates that distance for every senator who spoke about
+China less often than the (already inflated) non-zero mean. The old
+validator could never catch this because it recomputes the same mean from
+the same rows -- build and validator shared one wrong definition.
+
+Fix: `govinfo_bioguide_roster` now also returns `serving_by_year`, a
+year -> {bioguide ids} map built from the exact same congMember walk that
+already produces the name/bioguide roster (see that function's docstring for
+precisely what "serving" means here and what it misses). `build()` passes
+that map into `build_senators_frame` as `serving`; for every (bio, year)
+pair where `bio` is in `serving[year]` but has no entry in `counts`,
+`build_senators_frame` adds a mentions=0 row BEFORE computing the sentinel
+average, so the average is the mean over every senator this build can prove
+was serving that year -- not just the ones who happened to say "china".
+
+This is deliberately NOT "assume all 100 senators are always covered": a
+senator who served the whole year but whose speaking days were never
+captured by the cache (a gap day, an under-fetched year that still clears
+the manifest floor at the margins, a phantom-marked day) is still MISSED and
+still silently narrows the denominator for that one senator-year -- the
+proxy shrinks the blast radius of the original bug, it does not eliminate
+every version of it. `serving_by_year` requires GovInfo congMember metadata
+across the FULL 2010-2024 span (see I6 below), so this fix is only as good
+as that coverage.
+
+I6 -- main()'s gate must cover the FULL SENATOR_YEARS span, not just 2017+
+-----------------------------------------------------------------------------
+`govinfo_bioguide_roster` -- and now `serving_by_year` -- reads GovInfo
+congMember metadata across all of SENATOR_YEARS (2010-2024), not just the
+post-splice years GovInfo alone supplies china counts for. The old main()
+gate only validated 2017-2024 coverage, so a 2017+-only cache passed the
+gate while every 2010-2016 senator's roster/serving entry was silently
+absent (that senator then resolves via Gentzkow's own name matching, or not
+at all, but either way the "serving that year" signal for 2010-2016 was
+missing without the gate ever saying so). main() now calls
+`congress_cache.govinfo_range_usable` over `min(SENATOR_YEARS)` through
+`max(SENATOR_YEARS)`.
+
+I8 -- one cache walker, not four
+------------------------------------
+`govinfo_bioguide_roster` used to hand-roll its own walk over
+`raw_dir/{year}/*.json`, with a bare `except json.JSONDecodeError: continue`
+that dropped a malformed day file with NO counter at all -- a direct
+violation of this project's counting-discipline rule (dropped data must
+always be counted and reported). It now uses the shared
+`congress_cache.iter_govinfo_days`, the same walker `govinfo_senator_counts`
+already effectively duplicates by hand (that duplication is a known,
+separate piece of drift this task does not resolve) and that
+build_congress_mentions.py/build_congress_companions.py already use. Skips
+are counted by reason ('bad_json', 'phantom_marker') and returned, never
+swallowed.
 """
 from __future__ import annotations
 
@@ -132,6 +194,11 @@ from pathlib import Path
 import pandas as pd
 
 from calibrate_splice import OVERLAP_END_YEAR
+from congress_cache import (
+    MIN_REAL_DAYS_PER_YEAR,
+    govinfo_range_usable,
+    iter_govinfo_days,
+)
 from congress_speakers import (
     SPEAKER_RE,
     _STATE_CODES,  # single source of truth for the qualifier<->code table;
@@ -152,12 +219,6 @@ from twl_common import (
 OUT_PATH = DATA_DIR / "congress_senators.csv"
 SENTINEL = "Senate average"
 
-# No real CREC year has fewer than 20 days on record (fetch_congress_govinfo.py
-# uses the same floor for the same reason: the actual figure is well over 100).
-# A leftover single-day directory from earlier smoke testing must not be
-# mistaken for a usable cache -- see Task 10 brief.
-MIN_REAL_DAYS_PER_YEAR = 20
-
 # Cap on how many R2 contradiction examples build() keeps in memory/prints.
 # The running count is exact regardless of this cap; only the printed sample
 # is truncated.
@@ -167,15 +228,46 @@ MAX_CONTRADICTION_EXAMPLES = 20
 def build_senators_frame(
     counts: dict[tuple[str, int], int],
     names: dict[str, str],
+    serving: dict[int, set[str]],
 ) -> pd.DataFrame:
     """Turn {(bioguide, year): count} into the deliverable, with the sentinel row.
 
     `names` maps bioGuideId -> display name. A count for an unknown id raises,
     rather than shipping a chart labelled with a raw bioguide code.
+
+    `serving` maps year -> the set of bioguide ids this build can prove were
+    serving that year (see govinfo_bioguide_roster's serving_by_year for
+    exactly what that proxy is and what it misses). For every (bio, year) pair
+    where `bio` is in `serving[year]` but has no entry in `counts` -- a senator
+    who served but never said "china" that year -- a mentions=0 row is added
+    BEFORE the "Senate average" sentinel is computed (I2), so the average is
+    the mean over every senator known to be serving, not just the ones who
+    happened to speak the word. A bio with a zero row still must have a known
+    display name in `names`, same as any other row -- an unresolvable name is a
+    data problem, not something a zero-fill should paper over.
+
+    `serving` is REQUIRED, deliberately, and pass `{}` if you genuinely have no
+    serving data. It was briefly optional with a fallback to the old
+    speech-only population, and that is the shape of the I2 bug itself: the
+    published line is labelled "Senate average" while the mean is taken over
+    the self-selecting subset of senators who happened to say the word. A
+    caller that omitted the argument would have silently reproduced it, with no
+    error, in the fix for that very defect -- the single most repeated failure
+    signature in this project. A missing argument is now a TypeError at the
+    call site instead.
     """
     rows = []
+    seen: set[tuple[str, int]] = set()
     for (bio, year), count in counts.items():
         rows.append((names[bio], int(year), int(count)))
+        seen.add((bio, year))
+
+    if serving is not None:
+        for year, bios in serving.items():
+            for bio in bios:
+                if (bio, year) in seen:
+                    continue
+                rows.append((names[bio], int(year), 0))
 
     df = pd.DataFrame(rows, columns=["senator", "year", "mentions"])
 
@@ -279,52 +371,80 @@ def _state_qualifier_contradictions(text: str, members: list[dict]) -> list[str]
 
 def govinfo_bioguide_roster(
     raw_dir: Path, start_year: int, end_year: int
-) -> tuple[dict[str, list[dict[str, str]]], dict[str, str]]:
-    """Harvest a name -> bioguide bridge from GovInfo congMember metadata.
+) -> tuple[
+    dict[str, list[dict[str, str]]], dict[str, str], dict[int, set[str]], dict[str, int]
+]:
+    """Harvest a name -> bioguide bridge, and a serving-by-year proxy, from
+    GovInfo congMember metadata.
 
     Reads ONLY each granule's `members` list, never `text`, so this can never
     contribute to (or double-count) a china mention -- it exists purely to
-    give the Gentzkow half a way to resolve names to bioguide ids. Walks the
-    full [start_year, end_year] span (not just the post-splice years), since
-    a senator who left office before the splice would otherwise never appear
-    in any roster GovInfo could supply.
+    give the Gentzkow half a way to resolve names to bioguide ids, and (I2)
+    to give build_senators_frame a serving population for the "Senate
+    average" denominator. Walks the shared congress_cache.iter_govinfo_days
+    walker over the full [start_year, end_year] span (not just the
+    post-splice years), since a senator who left office before the splice
+    would otherwise never appear in any roster GovInfo could supply, and I6
+    requires main() to guarantee that full span is actually cached.
 
-    Returns (roster, bio_to_lnf). `roster` maps normalize_lnf(lnf) -> a
-    deduplicated list of {'bio', 'state', 'lnf'} for every SPEAKING member
-    ever seen under that surname key. `bio_to_lnf` maps every bioguide id
-    seen to its most recently observed lnf string, for display-name lookup
-    shared by both halves of build().
+    Returns (roster, bio_to_lnf, serving_by_year, skips).
+      * `roster` maps normalize_lnf(lnf) -> a deduplicated list of
+        {'bio', 'state', 'lnf'} for every SPEAKING member ever seen under
+        that surname key.
+      * `bio_to_lnf` maps every bioguide id seen to its most recently
+        observed lnf string, for display-name lookup shared by both halves
+        of build().
+      * `serving_by_year` maps every year in [start_year, end_year] -> the
+        set of bioguide ids proxied as "serving that year" by appearing as a
+        role=SPEAKING congMember on at least one CACHED day within it. THIS
+        IS A PROXY, NOT AN ASSERTION OF THE FULL CHAMBER:
+          - it can only ever UNDER-count: a senator who served the entire
+            year but whose speaking days were never captured by the cache
+            (a gap day, a phantom-marked day, a manifest-complete year that
+            is still missing this one senator's specific days) is silently
+            absent from the set for that year, and build_senators_frame will
+            not give them a zero row -- the same silent narrowing the
+            original I2 bug caused, just scoped to one senator-year instead
+            of every never-speaking senator.
+          - it can never OVER-count: nobody is added without a real granule
+            in the cache naming them as a SPEAKING member on a day within
+            that year.
+        The denominator this produces is therefore "senators this build can
+        prove were active from the cache it actually has", not "the 100
+        seated senators" -- state that explicitly rather than implying the
+        stronger claim.
+      * `skips` counts, by reason, every cached day this walk declined to
+        use: 'bad_json' (day file failed to parse), 'phantom_marker' (no
+        "granules" key) -- via the shared congress_cache walker, so a
+        truncated day here is reported with the same discipline as every
+        other cache walk in this project instead of being silently dropped
+        (see the I8 section of the module docstring).
     """
     by_surname: dict[str, dict[str, dict[str, str]]] = {}
     bio_to_lnf: dict[str, str] = {}
-    for year in range(start_year, end_year + 1):
-        year_dir = raw_dir / str(year)
-        if not year_dir.is_dir():
-            continue
-        for path in sorted(year_dir.glob("*.json")):
-            try:
-                day = json.loads(path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
-                continue
-            if "granules" not in day:
-                continue
-            for granule in day["granules"]:
-                for member in granule.get("members", []):
-                    if member.get("role") != "SPEAKING" or not member.get("bio"):
-                        continue
-                    lnf = member.get("lnf", "")
-                    if not lnf:
-                        continue
-                    bio = member["bio"]
-                    surname = normalize_lnf(lnf)
-                    by_surname.setdefault(surname, {})[bio] = {
-                        "bio": bio,
-                        "state": (member.get("state") or "").upper(),
-                        "lnf": lnf,
-                    }
-                    bio_to_lnf[bio] = lnf
+    serving_by_year: dict[int, set[str]] = {
+        year: set() for year in range(start_year, end_year + 1)
+    }
+    skips = {"bad_json": 0, "phantom_marker": 0}
+    for day in iter_govinfo_days(raw_dir, start_year, end_year, skips):
+        for granule in day.granules:
+            for member in granule.get("members", []):
+                if member.get("role") != "SPEAKING" or not member.get("bio"):
+                    continue
+                lnf = member.get("lnf", "")
+                if not lnf:
+                    continue
+                bio = member["bio"]
+                surname = normalize_lnf(lnf)
+                by_surname.setdefault(surname, {})[bio] = {
+                    "bio": bio,
+                    "state": (member.get("state") or "").upper(),
+                    "lnf": lnf,
+                }
+                bio_to_lnf[bio] = lnf
+                serving_by_year[day.year].add(bio)
     roster = {surname: list(bios.values()) for surname, bios in by_surname.items()}
-    return roster, bio_to_lnf
+    return roster, bio_to_lnf, serving_by_year, skips
 
 
 def match_gentzkow_speaker(
@@ -531,35 +651,6 @@ def gentzkow_senator_counts(
     return counts, skips
 
 
-def _govinfo_range_usable(
-    raw_dir: Path, start_year: int, end_year: int
-) -> tuple[bool, list[int]]:
-    """True only if EVERY year in [start_year, end_year] clears a real-day floor.
-
-    build_congress_mentions.py/build_congress_companions.py's own
-    `_govinfo_years_present` is satisfied by a single non-phantom day
-    ANYWHERE in the range -- fine for their corpus-level counts, but this
-    build needs the whole post-splice span walked day-by-day for carry_in
-    continuity, so a partially-fetched range would silently under-count
-    every senator's later years. It would also be satisfied by the leftover
-    single-day 2023 smoke-test directory this worktree carries, which is
-    exactly the false positive Task 10 warns about. Returns (usable, [years
-    missing or under MIN_REAL_DAYS_PER_YEAR]).
-    """
-    bad_years = []
-    for year in range(start_year, end_year + 1):
-        year_dir = raw_dir / str(year)
-        if not year_dir.is_dir():
-            bad_years.append(year)
-            continue
-        real_days = sum(
-            1 for p in year_dir.glob("*.json") if not p.name.endswith(".phantom.json")
-        )
-        if real_days < MIN_REAL_DAYS_PER_YEAR:
-            bad_years.append(year)
-    return not bad_years, bad_years
-
-
 def build() -> pd.DataFrame:
     """Walk both raw caches, attribute china mentions per senator per year, and
     write OUT_PATH.
@@ -578,12 +669,17 @@ def build() -> pd.DataFrame:
     """
     start_year, end_year = min(SENATOR_YEARS), max(SENATOR_YEARS)
 
-    roster, bio_to_lnf = govinfo_bioguide_roster(
+    roster, bio_to_lnf, serving_by_year, roster_skips = govinfo_bioguide_roster(
         CONGRESS_RAW_GOVINFO, start_year, end_year
     )
     print(
         f"GovInfo roster: {len(bio_to_lnf)} bioguide id(s) harvested from "
         "congMember metadata"
+    )
+    print(
+        "GovInfo roster walk skipped: "
+        f"{roster_skips['bad_json']} bad JSON day(s), "
+        f"{roster_skips['phantom_marker']} phantom marker(s)"
     )
 
     govinfo_counts, govinfo_skips, contradictions = govinfo_senator_counts(
@@ -645,7 +741,7 @@ def build() -> pd.DataFrame:
             "every bio that can appear here"
         )
 
-    df = build_senators_frame(counts, names)
+    df = build_senators_frame(counts, names, serving_by_year)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     df.to_csv(OUT_PATH, index=False)
     print(f"Wrote {len(df)} rows to {OUT_PATH}")
@@ -654,15 +750,27 @@ def build() -> pd.DataFrame:
 
 def main() -> int:
     missing = []
-    govinfo_start, govinfo_end = OVERLAP_END_YEAR + 1, max(SENATOR_YEARS)
-    usable, bad_years = _govinfo_range_usable(
+    # I6: govinfo_bioguide_roster (and, via it, the I2 serving-by-year proxy)
+    # reads GovInfo congMember metadata across the FULL SENATOR_YEARS span,
+    # not just the post-splice years GovInfo supplies china counts for. The
+    # gate used to check only OVERLAP_END_YEAR+1..max(SENATOR_YEARS)
+    # (2017-2024), so a 2017+-only cache passed while every pre-2017
+    # senator's roster/serving entry was silently absent. Gate on the whole
+    # span the roster walk actually needs, using the shared manifest-based
+    # completeness check (congress_cache.govinfo_range_usable) rather than a
+    # flat day floor -- see that function's docstring for why presence is
+    # not completeness.
+    govinfo_start, govinfo_end = min(SENATOR_YEARS), max(SENATOR_YEARS)
+    usable, bad_years = govinfo_range_usable(
         CONGRESS_RAW_GOVINFO, govinfo_start, govinfo_end
     )
     if not usable:
         missing.append(
             f"  - GovInfo cache missing or incomplete for {govinfo_start}-"
-            f"{govinfo_end} (need >= {MIN_REAL_DAYS_PER_YEAR} real days per "
-            f"year; short or absent: {bad_years}): {CONGRESS_RAW_GOVINFO}\n"
+            f"{govinfo_end} (need >= {MIN_REAL_DAYS_PER_YEAR} real cached "
+            f"days per year, verified against each year's fetch manifest; "
+            f"short, absent, or unmanifested: {bad_years}): "
+            f"{CONGRESS_RAW_GOVINFO}\n"
             "    Produce it with: python scripts/fetch_congress_govinfo.py "
             f"--start-year {govinfo_start} --end-year {govinfo_end}"
         )

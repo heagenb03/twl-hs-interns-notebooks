@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import sys
 import zipfile
 from pathlib import Path
@@ -186,7 +187,18 @@ def extract_congress(zf: zipfile.ZipFile, congress: str, out_dir: Path) -> dict[
     with zf.open(speeches_name) as fh:
         speech_rows = read_pipe_table(fh, REQUIRED_SPEECHES_COLUMNS, speeches_name)
 
-    with out_path.open("w", encoding="utf-8") as out:
+    # Write via a temp file and atomically replace, mirroring
+    # fetch_congress_govinfo.fetch_day() and for the identical reason: this
+    # loop streams rows one at a time, so a kill mid-write (OOM, SIGKILL,
+    # spot eviction) partway through a Congress must not leave a truncated
+    # file sitting at out_path. Consumers glob speeches_senate_*.jsonl and
+    # treat presence as completeness -- a truncated file at the FINAL name
+    # would look done to them; a truncated file under a name that glob
+    # doesn't match (".jsonl.partial", not ".jsonl") does not. os.replace is
+    # only reached after the with-block below closes cleanly, so partial
+    # writes never get renamed into the name consumers look for.
+    tmp_path = out_path.with_suffix(".jsonl.partial")
+    with tmp_path.open("w", encoding="utf-8") as out:
         for row in speech_rows:
             counts["total"] += 1
             sid = row["speech_id"]
@@ -214,6 +226,7 @@ def extract_congress(zf: zipfile.ZipFile, congress: str, out_dir: Path) -> dict[
                 + "\n"
             )
             counts["written"] += 1
+    os.replace(tmp_path, out_path)
 
     print(
         f"  congress {congress}: {counts['written']} Senate speeches written "
@@ -255,6 +268,24 @@ def main() -> int:
         f"({totals['skipped_no_descr']} no descr match, "
         f"{totals['skipped_not_senate']} non-Senate dropped)"
     )
+    # Non-zero exit when NOTHING was extracted, mirroring
+    # fetch_congress_govinfo.main()'s "1 if total_failed else 0". The
+    # archive layout this module assumes (see module docstring) has never
+    # been verified against an opened archive. If it's wrong, every congress
+    # prints its own diagnostic above and every count comes back zero --
+    # "0 of 0" -- which looks identical to a clean, empty run unless the
+    # exit code says otherwise. A caller that sees exit 0 is entitled to
+    # assume the run produced something.
+    if totals["written"] == 0:
+        print(
+            "ABORT: 0 Senate speeches were written across any congress in "
+            f"{args.first_congress}-{args.last_congress}. This almost certainly "
+            "means the archive layout assumption in this module's docstring is "
+            "wrong (it has never been verified against an opened archive) -- "
+            "not that these congresses genuinely had no Senate speeches. "
+            "Treating this as a failure instead of silently reporting success."
+        )
+        return 1
     return 0
 
 

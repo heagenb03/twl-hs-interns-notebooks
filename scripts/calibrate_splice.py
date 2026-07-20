@@ -271,6 +271,41 @@ def require_complete_overlap(
         )
 
 
+def resolve_strategy(
+    gentzkow_dir: Path = CONGRESS_RAW_GENTZKOW,
+    govinfo_dir: Path = CONGRESS_RAW_GOVINFO,
+) -> tuple[str, dict]:
+    """The splice verdict, gated on overlap completeness. Returns (strategy, comparison).
+
+    The one entry point every build uses, so that three builds cannot drift on
+    how the verdict is derived -- the same anti-drift argument that put the
+    tokenizer and the cache walker in shared modules. Raises
+    OverlapIncompleteError before computing anything if the overlap is too thin
+    to calibrate on.
+    """
+    require_complete_overlap(gentzkow_dir, govinfo_dir)
+    gentzkow_by_year = _gentzkow_china_counts_by_year(
+        gentzkow_dir, OVERLAP_START_YEAR, OVERLAP_END_YEAR
+    )
+    govinfo_by_year, _ = _govinfo_china_counts_by_year(
+        govinfo_dir, OVERLAP_START_YEAR, OVERLAP_END_YEAR
+    )
+    comparison = compare_overlap(gentzkow_by_year, govinfo_by_year)
+    return choose_strategy(comparison), comparison
+
+
+def govinfo_only_message(consumer: str, consequence: str) -> str:
+    """The shared text for refusing to build under a `govinfo_only` verdict."""
+    return (
+        "calibrate_splice.choose_strategy returned 'govinfo_only': the "
+        "Gentzkow and GovInfo china series diverge unstably over "
+        f"{OVERLAP_START_YEAR}-{OVERLAP_END_YEAR}, so the two halves must not "
+        f"be joined. {consequence} That is a decision for Heagen, not "
+        f"something {consumer} will apply silently. STOP and resolve this "
+        "before re-running the build."
+    )
+
+
 def main() -> int:
     missing = []
     if not CONGRESS_RAW_GENTZKOW.exists() or not any(

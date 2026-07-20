@@ -79,32 +79,53 @@ def test_era_with_too_few_distinct_words_raises():
         build_companions_frame(segments)
 
 
-def test_senate_average_is_the_mean_of_that_year():
+def test_senate_average_is_the_mean_of_every_serving_senator():
+    """UPDATED for I2. This test previously asserted avg2021 == 30, which is
+    the mean over the one senator who happened to say "china" that year -- the
+    shape of the I2 bug itself. Bob Brown serves in 2021 and never says it, so
+    the line labelled "Senate average" must average him in at zero.
+    """
     counts = {("A001", 2020): 10, ("A002", 2020): 20, ("A001", 2021): 30}
     names = {"A001": "Alice Adams", "A002": "Bob Brown"}
-    df = build_senators_frame(counts, names)
+    serving = {2020: {"A001", "A002"}, 2021: {"A001", "A002"}}
+    df = build_senators_frame(counts, names, serving)
     avg2020 = df[(df.senator == "Senate average") & (df.year == 2020)].mentions.iloc[0]
     avg2021 = df[(df.senator == "Senate average") & (df.year == 2021)].mentions.iloc[0]
     assert avg2020 == 15
-    assert avg2021 == 30
+    assert avg2021 == 15  # (30 + 0) / 2, not 30
 
 
-def test_file_stays_ragged():
-    # Beat 3 teaches "Josh Hawley only enters in 2019". No zero-fill.
+def test_file_stays_ragged_by_TENURE():
+    """Beat 3 teaches "Josh Hawley only enters in 2019". No zero-fill.
+
+    I2's zero rows do NOT break this, and the two together sharpen it. A
+    senator gets a zero row only for years they were serving, so absence now
+    means "not in office", where before it conflated "not in office" with
+    "served but never said china" (and, per I3, with a name-match failure).
+    Bob Brown takes office in 2022, so he has no 2020 row at all.
+    """
     counts = {("A001", 2020): 10, ("A002", 2022): 5}
     names = {"A001": "Alice Adams", "A002": "Bob Brown"}
-    df = build_senators_frame(counts, names)
+    serving = {2020: {"A001"}, 2022: {"A001", "A002"}}
+    df = build_senators_frame(counts, names, serving)
     bob = df[df.senator == "Bob Brown"]
     assert list(bob.year) == [2022]
 
 
 def test_rows_are_year_sorted_per_senator():
     counts = {("A001", 2022): 1, ("A001", 2020): 2, ("A001", 2021): 3}
-    df = build_senators_frame(counts, {"A001": "Alice Adams"})
+    serving = {year: {"A001"} for year in (2020, 2021, 2022)}
+    df = build_senators_frame(counts, {"A001": "Alice Adams"}, serving)
     alice = df[df.senator == "Alice Adams"]
     assert list(alice.year) == [2020, 2021, 2022]
 
 
 def test_unknown_bioguide_raises():
     with pytest.raises(KeyError):
-        build_senators_frame({("ZZZZ", 2020): 1}, {"A001": "Alice Adams"})
+        build_senators_frame({("ZZZZ", 2020): 1}, {"A001": "Alice Adams"}, {})
+
+
+def test_serving_is_required_so_it_cannot_be_forgotten():
+    """Omitting it used to silently fall back to the I2 population."""
+    with pytest.raises(TypeError):
+        build_senators_frame({("A001", 2020): 1}, {"A001": "Alice Adams"})

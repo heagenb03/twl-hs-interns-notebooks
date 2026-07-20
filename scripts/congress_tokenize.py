@@ -14,6 +14,11 @@ Tokenization rules, stated for data/PROVENANCE.md:
 
 Companion-word tokenization rules (companion_words), also for
 data/PROVENANCE.md:
+  - a hyphen immediately followed by a line break is rejoined (the line
+    break is removed, the hyphen is kept) before tokenizing, so a compound
+    hard-wrapped by CREC's fixed-column layout ("most-favored-\nnation")
+    still tokenizes as one word instead of splitting into "most-favored-"
+    and "nation"
   - "--" (two or more consecutive hyphens) becomes a space; a single hyphen
     stays inside its token, so compounds like "most-favored-nation" survive
   - possessives fold to their base form on every token, corpus-wide, not
@@ -72,8 +77,16 @@ def companion_words(text: str, window: str = "speech") -> list[str]:
     definition documented in PROVENANCE.md. Repeats are preserved so the caller
     can count frequency.
 
-    Before tokenizing, CREC's unspaced `--` (used for asides and vote tallies)
-    is normalized to a space, so e.g. "announced--yeas" splits into two words
+    Before tokenizing, a hyphen immediately followed by a line break is
+    rejoined to a bare hyphen, so a compound that CREC's fixed-column layout
+    hard-wraps across two lines ("most-favored-\r\nnation") still tokenizes
+    as one word instead of splitting into "most-favored-" and "nation" --
+    which would silently cost the notebook's Beat 2 top-three companion-word
+    anchor. A hyphen not followed by a line break, such as the suspended
+    elision in "one- and two-child policies", is untouched.
+
+    CREC's unspaced `--` (used for asides and vote tallies) is then
+    normalized to a space, so e.g. "announced--yeas" splits into two words
     instead of fusing into one that dodges both the stopword and pivot
     filters. Ordinary single hyphens are left alone, so hyphenated compounds
     like "most-favored-nation" still tokenize as one word.
@@ -94,6 +107,20 @@ def companion_words(text: str, window: str = "speech") -> list[str]:
         raise ValueError(f"unsupported window: {window!r}")
     if not count_term(text, "china"):
         return []
+    # CREC hard-wraps at a fixed column, so a hyphenated compound can land
+    # with its hyphen at end-of-line and the rest of the word on the next
+    # line ("most-favored-\r\nnation"). That line break is a typesetting
+    # artifact, not a second hyphen boundary. Left alone, _WORD_RE (which
+    # does not match across a newline) would split it into "most-favored-"
+    # and "nation", and neither reaches the notebook's Beat 2 top-three
+    # companion-word anchor -- silently degrading the very anchor this
+    # module's single-hyphen invariant exists to protect. Rejoining the
+    # hyphen-newline sequence back to a bare hyphen BEFORE tokenizing fixes
+    # this without touching an ordinary hyphen anywhere else: a hyphen
+    # followed by a space, as in the real 2021 fixture's "one- and
+    # two-child policies" (a suspended-compound elision, not a line-wrap),
+    # is untouched because it is not followed by a newline.
+    text = re.sub(r"-[ \t]*\r?\n[ \t]*", "-", text)
     text = re.sub(r"-{2,}", " ", text)  # CREC uses -- for asides
     out: list[str] = []
     for w in _WORD_RE.findall(text.lower()):

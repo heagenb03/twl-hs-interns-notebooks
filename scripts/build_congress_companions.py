@@ -1,9 +1,16 @@
 # scripts/build_congress_companions.py
 """Pure transform: raw corpus caches -> data/congress_companions.csv.
 
-Co-occurrence definition (documented in PROVENANCE.md): the window is the whole
-speech segment. If a segment mentions China at all, every non-stopword in it is
-a companion. Repeats count, so the ranking is by frequency.
+Co-occurrence definition (documented in PROVENANCE.md): the window is ONE
+SPEECH SEGMENT -- a single senator's single turn. If a segment mentions China
+at all, every non-stopword in it is a companion. Repeats count, so the ranking
+is by frequency.
+
+The two corpora reach that definition differently, and they must agree or the
+window changes at the splice year. Gentzkow ships one speech per record
+already. GovInfo ships whole granules, which are multi-speaker sections -- the
+committed 2021 fixture is 19 turns across 10 senators -- so each granule is
+split into turns here before any counting. See _granule_segments.
 
 Two raw caches feed this build, the same two build_congress_mentions.py uses:
   - GovInfo CREC granules, 1994-2024: data/_raw/congress_govinfo/{year}/{pkg}.json
@@ -29,12 +36,17 @@ from pathlib import Path
 
 import pandas as pd
 
-from calibrate_splice import OVERLAP_END_YEAR
+from calibrate_splice import (
+    OVERLAP_END_YEAR,
+    govinfo_only_message,
+    resolve_strategy,
+)
 from congress_cache import (
     MIN_REAL_DAYS_PER_YEAR,
     govinfo_range_usable,
     iter_govinfo_days,
 )
+from congress_speakers import SPEAKER_RE, split_turns
 from congress_tokenize import count_term, top_companions
 from twl_common import (
     CONGRESS_ERAS,
@@ -90,6 +102,55 @@ def _empty_era_segments() -> dict[str, list[str]]:
     return {era: [] for era in CONGRESS_ERAS}
 
 
+def _granule_segments(text: str, skips: dict[str, int]) -> list[str]:
+    """One GovInfo granule -> the speech segments Beat 2 should measure over.
+
+    A granule is NOT one speech. The committed 2021 fixture is 19 turns across
+    10 senators; the 1999 aviation granule mentions china exactly once in 36k
+    characters. Treating either as a single co-occurrence window means one
+    mention donates every word in a whole day's section, so the GovInfo-era
+    top-tens come back as procedural boilerplate and senator surnames --
+    measured on that 2021 fixture: presiding, officer, all, legislation, yeas,
+    nays, colleagues, cantwell. Per turn, the same granule gives all, america,
+    competition, states, research, plant, semiconductors, supply.
+
+    That matters because the Gentzkow half already uses one speech per segment,
+    so the window silently CHANGED DEFINITION at 2017 -- the splice year -- and
+    the split lands inside the 2010s era.
+
+    Splitting is done here, at the segment layer, with the existing
+    regression-covered congress_speakers.split_turns. It is deliberately NOT
+    done in congress_tokenize: the tokenizer's single-hyphen behaviour is what
+    keeps `most-favored-nation` intact, and that is itself a Beat 2 anchor.
+
+    Two guards, both required:
+
+    (a) A granule that yields no turns falls back to the whole granule. Real
+        headerless granules exist (CREC-2023-06-14 is 286 characters and has
+        none), and Task 9's synthetic fixture has no headers at all -- all four
+        of its tests break without this.
+
+    (b) Text before the first header is dropped by split_turns, and the drop is
+        COUNTED. In all three multi-speaker fixtures that head text is the
+        page-title block -- 0.7% to 3.9% of the granule, and zero china
+        mentions -- so dropping it also removes a known contaminant. But it can
+        equally be a continuation of the previous granule's speech, which is
+        real content, so the volume lost is reported rather than assumed
+        harmless.
+    """
+    turns = split_turns(text)
+    if not turns:
+        skips["granule_without_speaker_headers"] += 1
+        return [text]
+
+    header = SPEAKER_RE.search(text)
+    head = text[: header.start()] if header else ""
+    if head.strip():
+        skips["head_text_segments_dropped"] += 1
+        skips["head_text_china_dropped"] += count_term(head, "china")
+    return [segment for _, segment in turns]
+
+
 def govinfo_segments_by_era(
     raw_dir: Path, start_year: int, end_year: int
 ) -> tuple[dict[str, list[str]], dict[str, int]]:
@@ -117,6 +178,9 @@ def govinfo_segments_by_era(
         "granule_no_text": 0,
         "year_outside_known_eras": 0,
         "no_china_mention": 0,
+        "granule_without_speaker_headers": 0,
+        "head_text_segments_dropped": 0,
+        "head_text_china_dropped": 0,
     }
     for day in iter_govinfo_days(raw_dir, start_year, end_year, skips):
         era = _era_for_year(day.year)
@@ -128,10 +192,11 @@ def govinfo_segments_by_era(
             if era is None:
                 skips["year_outside_known_eras"] += 1
                 continue
-            if not count_term(text, "china"):
-                skips["no_china_mention"] += 1
-                continue
-            segments[era].append(text)
+            for segment in _granule_segments(text, skips):
+                if not count_term(segment, "china"):
+                    skips["no_china_mention"] += 1
+                    continue
+                segments[era].append(segment)
     return segments, skips
 
 
@@ -208,6 +273,36 @@ def build() -> pd.DataFrame:
     """
     start_year, end_year = min(MENTIONS_YEARS), max(MENTIONS_YEARS)
 
+    # I1: the splice verdict gates this build too.
+    #
+    # Task 9's docstring claimed the year-split "does not require invoking
+    # calibrate_splice since that split is identical under every splice
+    # outcome". True for `concatenate` and `scale`; FALSE for `govinfo_only`.
+    # Under that verdict build_congress_mentions produces nothing, while this
+    # build would run to completion over the very Gentzkow years the mentions
+    # build just declared untrustworthy -- shipping two of three CSVs built on
+    # data the third refused to use.
+    #
+    # The SCALE factor is deliberately NOT applied here (Heagen, 2026-07-20).
+    # A uniform factor cannot reorder a top-ten, so scaling is a no-op in every
+    # single-source era -- including 1990s and 2020s, which is the notebook's
+    # default comparison. It would only touch the straddling 2010s era, and
+    # there it is actively harmful: rounding a scaled count with k < 1 collapses
+    # small counts to zero and breaks the ten-word requirement.
+    strategy, _ = resolve_strategy(CONGRESS_RAW_GENTZKOW, CONGRESS_RAW_GOVINFO)
+    print(f"calibrate_splice.choose_strategy: {strategy}")
+    if strategy == "govinfo_only":
+        raise RuntimeError(
+            govinfo_only_message(
+                "build_congress_companions",
+                "That makes the 1990s and 2000s eras -- both drawn entirely "
+                "from Gentzkow -- untrustworthy for Beat 2's vocabulary-shift "
+                "claim, which compares 1990s against 2020s by default. "
+                "build_congress_mentions stops on this same verdict; "
+                "companions must not quietly ship instead.",
+            )
+        )
+
     gentzkow_segments, gentzkow_skips = gentzkow_segments_by_era(
         CONGRESS_RAW_GENTZKOW, start_year, OVERLAP_END_YEAR
     )
@@ -232,7 +327,15 @@ def build() -> pd.DataFrame:
         f"{govinfo_skips['granule_no_text']} granule(s) with no text, "
         f"{govinfo_skips['year_outside_known_eras']} granule(s) with a year "
         "outside CONGRESS_ERAS, "
-        f"{govinfo_skips['no_china_mention']} granule(s) with no china mention"
+        f"{govinfo_skips['no_china_mention']} segment(s) with no china mention"
+    )
+    print(
+        "GovInfo segmentation: "
+        f"{govinfo_skips['granule_without_speaker_headers']} granule(s) had no "
+        "speaker headers and were used whole, "
+        f"{govinfo_skips['head_text_segments_dropped']} pre-header head "
+        "block(s) dropped carrying "
+        f"{govinfo_skips['head_text_china_dropped']} china mention(s)"
     )
 
     segments_by_era = {
