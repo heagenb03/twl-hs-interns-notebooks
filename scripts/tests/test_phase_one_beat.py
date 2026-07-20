@@ -55,10 +55,41 @@ def test_phase_one_is_a_small_move_in_absolute_terms(prices):
         assert move < 1.0, f"{ticker}: Phase One day-0 move was {move:.2f}%"
 
 
+def _assert_covid_crash_bounds(covid_window: pd.Series) -> None:
+    """Two-sided COVID-crash canary.
+
+    The upper bound (<120) rejects "no crash at all" data (BA stayed high
+    through the window). The lower bound (>80) is the one that matters most
+    here — it rejects implausible/placeholder data, e.g. a column held
+    constant at 1.0 (min == 1.0, well under 80). Do not simplify this back
+    to one-sided: a naive `min() < 150` passes on an all-1.0 BA column,
+    which also clears validate_tariff's non-positive-price check (1.0 > 0),
+    so nothing else would catch it. The real 2020 BA low (95.01) sits
+    comfortably inside (80, 120).
+    """
+    assert 80 < covid_window.min() < 120, (
+        "expected the March 2020 BA collapse (real low ~95.01) inside "
+        "(80, 120) in real data; if outside this band, the fetch may not "
+        "have used real prices or the series may be a placeholder"
+    )
+
+
 def test_covid_crash_is_present_in_the_data(prices):
     """Documents the confound rather than hiding it: BA really does collapse."""
     covid_window = prices.loc["2020-02-01":"2020-04-30", "BA"]
-    assert covid_window.min() < 150, (
-        "expected the March 2020 BA collapse in real data; if absent, the "
-        "fetch may not have used real prices"
+    _assert_covid_crash_bounds(covid_window)
+
+
+def test_covid_canary_rejects_constant_placeholder_data():
+    """Finding 3 regression.
+
+    A positive placeholder (BA held constant at 1.0) must fail the canary.
+    It clears a naive `min() < 150` check and validate_tariff's
+    non-positive-price check (1.0 > 0), so the two-sided bound here is the
+    only thing standing between placeholder data and a passing suite.
+    """
+    covid_window = pd.Series(
+        1.0, index=pd.date_range("2020-02-01", "2020-04-30", freq="B")
     )
+    with pytest.raises(AssertionError):
+        _assert_covid_crash_bounds(covid_window)

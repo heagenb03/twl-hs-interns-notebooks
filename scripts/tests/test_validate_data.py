@@ -118,6 +118,40 @@ def test_duplicated_leading_event_date_reports_no_preceding_row(good_prices):
     )
 
 
+def test_truncated_span_is_reported(good_prices):
+    """Finding 1 regression.
+
+    A frame with correct columns, no nulls, and all six event dates present
+    but a late start (a full year of history silently missing) must be
+    reported. Nothing else checks the dataset's span against
+    twl_common.PRICE_START/PRICE_END.
+    """
+    broken = good_prices.loc["2018-01-01":]
+    problems = validate_tariff(broken)
+    assert any(
+        "2017-01-03" in p and ("start" in p.lower() or "index" in p.lower())
+        for p in problems
+    )
+
+
+def test_nonnumeric_price_is_reported_not_raised(good_prices):
+    """Finding 2 regression.
+
+    A committed, hand-editable CSV can have a stray character that makes a
+    price column object dtype. validate_tariff's contract is report, never
+    raise; a raw `<=` comparison on an object column raises TypeError.
+    """
+    broken = good_prices.copy()
+    broken["BA"] = broken["BA"].astype(object)
+    broken.loc[broken.index[10], "BA"] = "oops"
+
+    problems = validate_tariff(broken)  # must not raise
+
+    assert isinstance(problems, list)
+    assert all(isinstance(p, str) for p in problems)
+    assert any("BA" in p and "numeric" in p.lower() for p in problems)
+
+
 def test_early_return_does_not_skip_price_checks(good_prices):
     """Defect 3 regression.
 

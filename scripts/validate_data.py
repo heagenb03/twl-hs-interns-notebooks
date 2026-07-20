@@ -12,7 +12,7 @@ import sys
 
 import pandas as pd
 
-from twl_common import DATA_DIR, EVENT_DATES, EXPECTED_TICKERS
+from twl_common import DATA_DIR, EVENT_DATES, EXPECTED_TICKERS, PRICE_END, PRICE_START
 
 
 def validate_tariff(df: pd.DataFrame) -> list[str]:
@@ -31,12 +31,30 @@ def validate_tariff(df: pd.DataFrame) -> list[str]:
         n_null = int(df[tk].isna().sum())
         if n_null:
             problems.append(f"{tk} has {n_null} null price(s)")
-        if (df[tk].dropna() <= 0).any():
+        non_null = df[tk].dropna()
+        if not pd.api.types.is_numeric_dtype(non_null):
+            problems.append(f"{tk} is not numeric (dtype: {non_null.dtype})")
+            continue
+        if (non_null <= 0).any():
             problems.append(f"{tk} has non-positive price(s)")
 
     if not isinstance(df.index, pd.DatetimeIndex):
         problems.append("index is not a DatetimeIndex")
         return problems
+
+    if len(df.index) > 0:
+        expected_start = pd.Timestamp(PRICE_START)
+        expected_end = pd.Timestamp(PRICE_END)
+        actual_start = df.index.min()
+        actual_end = df.index.max()
+        if actual_start != expected_start:
+            problems.append(
+                f"index starts {actual_start.date()}, expected {expected_start.date()}"
+            )
+        if actual_end != expected_end:
+            problems.append(
+                f"index ends {actual_end.date()}, expected {expected_end.date()}"
+            )
 
     if not df.index.is_monotonic_increasing:
         problems.append("index is not sorted ascending")
