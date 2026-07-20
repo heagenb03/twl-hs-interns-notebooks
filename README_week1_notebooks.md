@@ -5,7 +5,7 @@
 |---|---|---|---|
 | `bill_classifier.ipynb` | `bills_china.csv` | sentence-transformers | **Estimates — recapture** |
 | `congress_mentions.ipynb` | `congress_mentions.csv`, `congress_companions.csv`, `congress_senators.csv` | none | **Real** (deterministic data) |
-| `tariff_event_study.ipynb` | `tariff_prices.csv` | none | **Real** (deterministic data) |
+| `tariff_event_study.ipynb` | `tariff_prices.csv` | none | **Real** (actual market data) |
 | `media_framing.ipynb` | `headlines.csv` | sentence-transformers, vaderSentiment | Beat 1 sentiment: **real**. Beat 2/3 classifier: **estimates — recapture** |
 
 All four follow the approved template: personal-copy intro (Drive distribution model),
@@ -47,9 +47,10 @@ notebook file itself lives (GitHub master vs. named Drive copies).
      pull. **Per-senator counts are synthetic numbers attached to real names** — the
      names and general pattern match the public record of who leads on China rhetoric,
      but replace with real counts before anything leaves the program context.
-   - `tariff_prices.csv` — synthetic walks with plausibly-sized injected moves at six
-     real announcement dates. Swap for actual yfinance pulls (frozen to CSV) when ready;
-     the six dates and event labels are real and can stay.
+   - `tariff_prices.csv` — **done (2026-07-19).** Swapped for real Yahoo Finance
+     closes via `yfinance`, frozen to CSV: 879 trading days, 2017-01-03 to
+     2020-06-30. The six dates and event labels were already real and are
+     unchanged. See `data/PROVENANCE.md` for the full pull record.
    - `headlines.csv` — 72 synthetic headlines written in outlet styles (intentionally so:
      avoids copyright and gives clean signal). The notebook discloses this to interns.
      Could stay synthetic permanently, or swap for a real curated set later.
@@ -60,6 +61,9 @@ and typo-forgiveness path tested (see `test_nb.py`, `test_three.py`). NOT verifi
 in sandbox: real embedding quality (HuggingFace unreachable — tests used a
 non-semantic stand-in, which is why classifier scores in test logs look weak).
 VADER sentiment WAS tested for real — all Beat 1 media numbers are genuine.
+`tariff_event_study.ipynb` was modified by the real-data swap (data and helpers
+both changed) and awaits re-verification with a fresh Colab run — its "top-to-bottom"
+status above predates that swap.
 
 ## Design decisions worth remembering
 - Media Beat 1 defaults to Phase One because it carries the best story: Fox (+0.05)
