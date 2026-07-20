@@ -157,11 +157,27 @@ def _atomic_write_text(path: Path, content: str) -> None:
     one -- never a half-written file at `path`.
     """
     tmp_path = path.with_name(path.name + ".tmp")
-    tmp_path.write_text(content, encoding="utf-8")
-    os.replace(tmp_path, path)
+    try:
+        tmp_path.write_text(content, encoding="utf-8")
+        os.replace(tmp_path, path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
 
 def _write_cache(data: dict, status: dict) -> None:
+    # Order is load-bearing: RAW_PATH must be written before STATUS_PATH.
+    # Each _atomic_write_text call is individually atomic, but the pair is
+    # not transactional -- a crash between the two os.replace calls is
+    # possible. If status were written first (or the order were reversed),
+    # a crash mid-write during a re-fetch could leave status durably saying
+    # "ok" while data still held the OLD, stale value from before this
+    # re-fetch. The `outlet in data[event]` skip-check in fetch_all cannot
+    # detect that case, because the key exists -- so the stale cell would be
+    # trusted forever. Writing data first means the only inconsistent state
+    # a crash can leave behind is fresh data with stale/missing status,
+    # which just triggers a harmless re-fetch on resume, never a silent
+    # trust of stale data.
     _atomic_write_text(RAW_PATH, json.dumps(data, indent=2, ensure_ascii=False))
     _atomic_write_text(STATUS_PATH, json.dumps(status, indent=2, ensure_ascii=False))
 

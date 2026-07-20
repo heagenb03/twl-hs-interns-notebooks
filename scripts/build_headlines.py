@@ -43,12 +43,20 @@ def build_frame(raw: dict) -> pd.DataFrame:
     Events are emitted in the canonical order defined by fetch_headlines.EVENTS,
     NOT the order they appear in `raw`. The notebook selects its default event
     with unique()[2], so row order is load-bearing.
+
+    Dedup scope is per-outlet, across ALL events -- not per (event, outlet).
+    A headline republished under two different events for the same outlet is
+    kept only once, at its first occurrence in canonical event order. This is
+    required because the notebook trains an outlet classifier on headline
+    text: a duplicate (outlet, headline) surviving under two events would let
+    the same example leak into both a train split and a test split.
     """
     rows: list[dict[str, str]] = []
+    seen_by_outlet: dict[str, set[str]] = {outlet: set() for outlet in OUTLET_DOMAINS}
     for event, _start, _end in EVENTS:
         outlets = raw.get(event, {})
         for outlet in OUTLET_DOMAINS:
-            seen: set[str] = set()
+            seen = seen_by_outlet[outlet]
             for article in outlets.get(outlet, []):
                 headline = clean_title(article.get("title", ""))
                 if not headline or headline in seen:

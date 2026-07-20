@@ -76,6 +76,32 @@ def test_headlines_are_stripped(raw):
     assert "Trade Truce Leaves Tariffs In Place" in set(out.headline)
 
 
+def test_duplicate_headlines_across_events_for_same_outlet_are_dropped():
+    """A headline republished under two different events for the same outlet
+    is a train/test leak for the outlet classifier, so it must be kept only
+    once -- at its canonically-first occurrence (per fetch_headlines.EVENTS)."""
+    raw = {
+        "Phase One deal": {
+            "NYT": [
+                {"title": "China Trade Tensions Rise - The New York Times",
+                 "url": "u10", "domain": "nytimes.com", "seendate": "20200115T120000Z"},
+            ],
+            "WSJ": [], "Fox": [], "Xinhua": [],
+        },
+        "2018 tariff announcement": {
+            "NYT": [
+                {"title": "China Trade Tensions Rise - The New York Times",
+                 "url": "u11", "domain": "nytimes.com", "seendate": "20180322T120000Z"},
+            ],
+            "WSJ": [], "Fox": [], "Xinhua": [],
+        },
+    }
+    out = build_frame(raw)
+    matches = out[(out.outlet == "NYT") & (out.headline == "China Trade Tensions Rise")]
+    assert len(matches) == 1
+    assert matches.iloc[0]["event"] == "2018 tariff announcement"
+
+
 def test_blank_titles_are_dropped():
     raw = {"Phase One deal": {"NYT": [
         {"title": "   ", "url": "u", "domain": "nytimes.com", "seendate": ""},

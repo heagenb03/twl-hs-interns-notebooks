@@ -322,6 +322,24 @@ def test_fetch_all_ok_status_without_data_is_refetched_not_skipped(monkeypatch):
     assert new_status[event][outlet] == "ok"
 
 
+def test_atomic_write_text_removes_tmp_file_on_replace_failure(monkeypatch, tmp_path):
+    """Fix 2: a failure inside _atomic_write_text must not leak the .tmp
+    sibling, and must not swallow the original exception."""
+    target = tmp_path / "out.json"
+    tmp_sibling = tmp_path / "out.json.tmp"
+
+    def boom(_src, _dst):
+        raise OSError("simulated os.replace failure")
+
+    monkeypatch.setattr(fh.os, "replace", boom)
+
+    with pytest.raises(OSError, match="simulated os.replace failure"):
+        fh._atomic_write_text(target, "content")
+
+    assert not tmp_sibling.exists(), ".tmp file must be cleaned up after a failed write"
+    assert not target.exists()
+
+
 def test_main_returns_1_when_any_cell_ends_in_error_status(monkeypatch, tmp_path):
     monkeypatch.setattr(sys, "argv", ["fetch_headlines.py"])
     monkeypatch.setattr(fh, "RAW_DIR", tmp_path)
