@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from fetch_congress_gentzkow import (
+    decode_archive_bytes,
     SENATE_CHAMBER,
     extract_congress,
     find_congress_files,
@@ -293,3 +294,27 @@ def test_output_jsonl_shape_matches_downstream_contract(tmp_path: Path):
     assert row["chamber"] == "S"
     assert row["text"] == "remarks about tariffs"
     assert all(isinstance(v, str) for v in row.values())
+
+
+# --- archive encoding ---------------------------------------------------------
+
+
+def test_latin1_accented_names_survive_decoding() -> None:
+    """A latin-1 archive must not lose accented senator surnames.
+
+    decode("utf-8", errors="replace") silently turns 'Menendez' with an accent
+    into 'Men�ndez'. Menendez and Lujan both sat inside the covered window,
+    and the loss is not local: congress_speakers folds accents so a rendered
+    header matches its metadata name, but the mangled form folds to a different
+    key and the senator silently stops matching.
+    """
+    for name in ("Mu\xf1oz", "Luj\xe1n", "Men\xe9ndez", "Pe\xf1a"):
+        assert decode_archive_bytes(name.encode("latin-1")) == name
+        assert decode_archive_bytes(name.encode("utf-8")) == name
+
+
+def test_decoding_never_substitutes_the_replacement_character() -> None:
+    """Whatever the real archive's encoding turns out to be, no byte sequence
+    should decode to U+FFFD -- that is silent, unrecoverable information loss."""
+    assert "�" not in decode_archive_bytes("Luj\xe1n".encode("latin-1"))
+    assert "�" not in decode_archive_bytes("Luj\xe1n".encode("utf-8"))

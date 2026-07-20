@@ -58,6 +58,31 @@ REQUIRED_DESCR_COLUMNS: tuple[str, ...] = ("speech_id", "chamber", "date")
 LISTING_TRUNCATE = 20
 
 
+def decode_archive_bytes(raw: bytes) -> str:
+    """Decode archive bytes without destroying characters.
+
+    The real archive's encoding is UNVERIFIED -- it has never been opened (the
+    11.4 GB download is deferred), and the documented layout says nothing about
+    it. So this must be lossless under either plausible answer.
+
+    `decode("utf-8", errors="replace")` is NOT safe here: on latin-1 input it
+    silently substitutes U+FFFD for every accented character, with no error.
+    That destroys real senators' names -- Menendez and Lujan both sat inside the
+    covered window -- and the damage does not stay local. congress_speakers
+    folds accents so a rendered header matches its metadata name, but a mangled
+    surname folds to 'LUJ�N', which never equals 'LUJAN', so the senator
+    silently fails to match and their mentions land nowhere.
+
+    utf-8 strict first, latin-1 as the fallback: latin-1 maps every byte to a
+    codepoint, so it never raises and never loses information. Verified
+    lossless on Munoz/Lujan/Menendez/Pena encoded either way.
+    """
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw.decode("latin-1")
+
+
 def read_pipe_table(
     handle: IO[bytes], required_columns: tuple[str, ...], source: str
 ) -> list[dict[str, str]]:
@@ -66,7 +91,7 @@ def read_pipe_table(
     Raises ValueError naming `source` and the missing column(s) if the
     header lacks any column in `required_columns`.
     """
-    text = handle.read().decode("utf-8", errors="replace").splitlines()
+    text = decode_archive_bytes(handle.read()).splitlines()
     # QUOTE_NONE: the hein-daily format is plain pipe-delimited with no
     # csv-style quoting. Speech text is full of literal '"' characters
     # (senators quote constantly); csv's default quoting treats a leading
