@@ -143,7 +143,7 @@ def main() -> int:
     if not RAW_PATH.exists():
         print(f"missing {RAW_PATH} — run: python scripts/fetch_headlines.py")
         return 1
-    frame, problems = build()
+    frame, problems = build(RAW_PATH, OUT_PATH)
     if problems:
         print(f"FAIL: refusing to write {OUT_PATH} -- validation problem(s):")
         for problem in problems:

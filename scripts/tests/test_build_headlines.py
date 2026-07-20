@@ -3,6 +3,7 @@ import json
 import pandas as pd
 import pytest
 
+import build_headlines as bh
 from build_headlines import build, build_frame, clean_title
 
 
@@ -251,6 +252,61 @@ def test_build_reports_clear_message_for_fewer_than_three_events_no_indexerror(t
     frame, problems = build(raw_path=raw_path, out_path=out_path)
 
     assert any("only 1 distinct event" in p or "need at least 3" in p for p in problems)
+    assert not out_path.exists()
+
+
+def test_main_returns_1_and_skips_write_when_third_event_is_wrong(monkeypatch, tmp_path):
+    """Finding 3, the exit-code half: main() itself (not just build()) must
+    return non-zero and must not write the CSV when the built frame violates
+    the third-event invariant."""
+    raw = {
+        "2018 tariff announcement": {
+            "NYT": [{"title": "China Tariffs Announced", "url": "u1",
+                      "domain": "nytimes.com", "seendate": ""}],
+            "WSJ": [], "Fox": [], "Xinhua": [],
+        },
+        "Huawei CFO arrest": {
+            "NYT": [{"title": "China Huawei Arrest Sparks Anger", "url": "u2",
+                      "domain": "nytimes.com", "seendate": ""}],
+            "WSJ": [], "Fox": [], "Xinhua": [],
+        },
+        "Hong Kong security law": {
+            "NYT": [{"title": "China Hong Kong Law Passed", "url": "u3",
+                      "domain": "nytimes.com", "seendate": ""}],
+            "WSJ": [], "Fox": [], "Xinhua": [],
+        },
+    }
+    raw_path = tmp_path / "raw.json"
+    out_path = tmp_path / "out.csv"
+    raw_path.write_text(json.dumps(raw), encoding="utf-8")
+    monkeypatch.setattr(bh, "RAW_PATH", raw_path)
+    monkeypatch.setattr(bh, "OUT_PATH", out_path)
+
+    exit_code = bh.main()
+
+    assert exit_code == 1
+    assert not out_path.exists()
+
+
+def test_main_returns_1_without_indexerror_for_fewer_than_three_events(monkeypatch, tmp_path):
+    """Finding 3, the IndexError half: fewer than 3 surviving events must
+    make main() return 1 with a clear message, never crash on order[2]."""
+    raw = {
+        "2018 tariff announcement": {
+            "NYT": [{"title": "China Tariffs Announced", "url": "u1",
+                      "domain": "nytimes.com", "seendate": ""}],
+            "WSJ": [], "Fox": [], "Xinhua": [],
+        },
+    }
+    raw_path = tmp_path / "raw.json"
+    out_path = tmp_path / "out.csv"
+    raw_path.write_text(json.dumps(raw), encoding="utf-8")
+    monkeypatch.setattr(bh, "RAW_PATH", raw_path)
+    monkeypatch.setattr(bh, "OUT_PATH", out_path)
+
+    exit_code = bh.main()  # must not raise IndexError
+
+    assert exit_code == 1
     assert not out_path.exists()
 
 
