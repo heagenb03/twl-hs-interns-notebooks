@@ -20,7 +20,11 @@ import statistics
 import sys
 from pathlib import Path
 
-from congress_cache import coverage_report, govinfo_range_usable, iter_govinfo_days
+from congress_cache import (
+    coverage_report,
+    govinfo_years_usable,
+    iter_govinfo_days,
+)
 from congress_tokenize import count_term
 from twl_common import CONGRESS_RAW_GENTZKOW, CONGRESS_RAW_GOVINFO
 
@@ -30,6 +34,35 @@ STABLE_CV = 0.10         # coefficient of variation of the ratio under 10% -> sc
 OVERLAP_START_YEAR = 1994
 OVERLAP_END_YEAR = 2016  # inclusive
 TERM = "china"
+
+CALIBRATION_YEARS: tuple[int, ...] = (
+    1994, 1998, 2002, 2006,          # sparse probes across 1994-2009
+    2010, 2011, 2012, 2013, 2014, 2015, 2016,  # needed for the roster anyway
+)
+"""The overlap years the verdict is actually computed on.
+
+The two corpora overlap across all of 1994-2016, but pulling every GovInfo year
+in that window costs roughly 32 hours serial and NONE of it reaches a published
+CSV -- Gentzkow supplies every pre-2017 count. Those years exist purely to
+calibrate. 2010-2016 is the exception: build_congress_senators needs it for the
+bioguide roster and the serving set, so it is data and free to calibrate on.
+
+Hence 2010-2016 in full, plus sparse probes back through 1994. Two properties
+matter, and the second is why this is a SAMPLE rather than a shorter window:
+
+  * The scale factor is applied to all of 1990-2016. A factor fitted only to a
+    contiguous 2010-2016 window would be extrapolated back twenty years with
+    nothing testing it. Keeping probes at 1994/1998/2002/2006 means the
+    calibration SPANS the era the factor is applied to.
+  * cv is a measure of whether the two corpora TRACK each other, not whether
+    they happen to agree once. That only means something across the span. If
+    the relationship in 1994 differs from 2016, cv rises and the verdict moves
+    to govinfo_only instead of silently scaling the 1990s by a 2010s factor.
+
+Widening this back to the full range is always safe and always more expensive.
+Narrowing it further -- dropping the pre-2000 probe in particular -- removes the
+only thing that would detect a 1990s-specific divergence.
+"""
 
 MIN_GENTZKOW_SPEECHES_PER_YEAR = 500
 """Floor for calling a Gentzkow overlap year usable.
@@ -231,28 +264,26 @@ def require_complete_overlap(
     finding lives.
     """
     problems = []
+    years = [y for y in CALIBRATION_YEARS if start_year <= y <= end_year]
 
-    _, bad_govinfo = govinfo_range_usable(govinfo_dir, start_year, end_year)
+    _, bad_govinfo = govinfo_years_usable(govinfo_dir, years)
     if bad_govinfo:
-        report = coverage_report(govinfo_dir, start_year, end_year)
+        report = coverage_report(govinfo_dir, min(years), max(years))
         detail = "\n".join(f"      {report[y].describe()}" for y in bad_govinfo)
         problems.append(
-            f"  - GovInfo: {len(bad_govinfo)} of "
-            f"{end_year - start_year + 1} overlap year(s) not fully covered "
-            f"against their sitemap manifest:\n{detail}"
+            f"  - GovInfo: {len(bad_govinfo)} of {len(years)} calibration "
+            f"year(s) not fully covered against their sitemap manifest:\n{detail}"
         )
 
-    gentzkow_counts = _gentzkow_speech_counts_by_year(
-        gentzkow_dir, start_year, end_year
-    )
+    all_gentzkow = _gentzkow_speech_counts_by_year(gentzkow_dir, start_year, end_year)
+    gentzkow_counts = {y: all_gentzkow[y] for y in years}
     bad_gentzkow = sorted(
         y for y, n in gentzkow_counts.items() if n < MIN_GENTZKOW_SPEECHES_PER_YEAR
     )
     if bad_gentzkow:
         detail = ", ".join(f"{y} ({gentzkow_counts[y]} speech(es))" for y in bad_gentzkow)
         problems.append(
-            f"  - Gentzkow: {len(bad_gentzkow)} of "
-            f"{end_year - start_year + 1} overlap year(s) below "
+            f"  - Gentzkow: {len(bad_gentzkow)} of {len(years)} calibration year(s) below "
             f"{MIN_GENTZKOW_SPEECHES_PER_YEAR} speech records: {detail}"
         )
 
@@ -284,12 +315,19 @@ def resolve_strategy(
     to calibrate on.
     """
     require_complete_overlap(gentzkow_dir, govinfo_dir)
-    gentzkow_by_year = _gentzkow_china_counts_by_year(
+    gentzkow_all = _gentzkow_china_counts_by_year(
         gentzkow_dir, OVERLAP_START_YEAR, OVERLAP_END_YEAR
     )
-    govinfo_by_year, _ = _govinfo_china_counts_by_year(
+    govinfo_all, _ = _govinfo_china_counts_by_year(
         govinfo_dir, OVERLAP_START_YEAR, OVERLAP_END_YEAR
     )
+    # Restrict BOTH sides to CALIBRATION_YEARS. Gentzkow has every year (it is
+    # a bulk archive), so without this the intersection would silently be
+    # whatever GovInfo years happen to be on disk -- which is exactly the
+    # "verdict computed on an unstated subset" failure the coverage gate
+    # exists to prevent.
+    gentzkow_by_year = {y: gentzkow_all[y] for y in CALIBRATION_YEARS if y in gentzkow_all}
+    govinfo_by_year = {y: govinfo_all[y] for y in CALIBRATION_YEARS if y in govinfo_all}
     comparison = compare_overlap(gentzkow_by_year, govinfo_by_year)
     return choose_strategy(comparison), comparison
 

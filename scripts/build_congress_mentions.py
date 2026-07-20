@@ -25,6 +25,7 @@ from pathlib import Path
 import pandas as pd
 
 from calibrate_splice import (
+    CALIBRATION_YEARS,
     OVERLAP_END_YEAR,
     OVERLAP_START_YEAR,
     choose_strategy,
@@ -32,11 +33,7 @@ from calibrate_splice import (
     govinfo_only_message,
     resolve_strategy,
 )
-from congress_cache import (
-    MIN_REAL_DAYS_PER_YEAR,
-    govinfo_range_usable,
-    iter_govinfo_days,
-)
+from congress_cache import govinfo_years_usable, iter_govinfo_days
 from congress_tokenize import count_all_terms
 from twl_common import (
     CONGRESS_RAW_GENTZKOW,
@@ -298,16 +295,23 @@ def build() -> pd.DataFrame:
 def main() -> int:
     missing = []
     govinfo_end = max(MENTIONS_YEARS)
-    usable, bad_years = govinfo_range_usable(
-        CONGRESS_RAW_GOVINFO, GOVINFO_START_YEAR, govinfo_end
-    )
+    # Not a contiguous range: the pre-2017 half is needed only to calibrate the
+    # splice, and calibrate_splice samples those years rather than requiring all
+    # 23 (see CALIBRATION_YEARS -- the full overlap costs ~32h to pull and none
+    # of it reaches a published CSV).
+    required = sorted(set(CALIBRATION_YEARS) | set(range(OVERLAP_END_YEAR + 1, govinfo_end + 1)))
+    usable, bad_years = govinfo_years_usable(CONGRESS_RAW_GOVINFO, required)
     if not usable:
         missing.append(
-            f"  - GovInfo cache missing or incomplete for {GOVINFO_START_YEAR}-"
-            f"{govinfo_end} (need >= {MIN_REAL_DAYS_PER_YEAR} real cached days "
-            f"per year; short or absent: {bad_years}): {CONGRESS_RAW_GOVINFO}\n"
-            "    Produce it with: python scripts/fetch_congress_govinfo.py "
-            f"--start-year {GOVINFO_START_YEAR} --end-year {govinfo_end}"
+            f"  - GovInfo cache incomplete. Missing or short: {bad_years}\n"
+            f"    Required: {list(CALIBRATION_YEARS)} (splice calibration "
+            f"sample) plus {OVERLAP_END_YEAR + 1}-{govinfo_end} (the data).\n"
+            f"    Cache: {CONGRESS_RAW_GOVINFO}\n"
+            "    Produce it with one run per contiguous block, e.g.:\n"
+            f"      python scripts/fetch_congress_govinfo.py "
+            f"--start-year {min(CALIBRATION_YEARS)} --end-year {min(CALIBRATION_YEARS)}\n"
+            f"      python scripts/fetch_congress_govinfo.py "
+            f"--start-year 2010 --end-year {govinfo_end}"
         )
     if not CONGRESS_RAW_GENTZKOW.exists() or not any(
         CONGRESS_RAW_GENTZKOW.glob("speeches_senate_*.jsonl")

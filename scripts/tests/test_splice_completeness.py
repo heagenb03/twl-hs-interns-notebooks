@@ -38,7 +38,10 @@ from calibrate_splice import (
 )
 from congress_cache import MIN_REAL_DAYS_PER_YEAR, write_manifest
 
-OVERLAP_YEARS = range(OVERLAP_START_YEAR, OVERLAP_END_YEAR + 1)
+from calibrate_splice import CALIBRATION_YEARS
+
+# Only the sampled years are required now; see CALIBRATION_YEARS.
+OVERLAP_YEARS = CALIBRATION_YEARS
 
 
 SESSION_DAYS = 30  # stands in for a full Senate year (~150); kept small for test speed
@@ -88,12 +91,12 @@ def test_complete_overlap_passes(tmp_path):
 
 def test_a_short_govinfo_year_blocks_the_verdict(tmp_path):
     govinfo, gentzkow = tmp_path / "gov", tmp_path / "gen"
-    _fill_govinfo(govinfo, [y for y in OVERLAP_YEARS if y != 2005])
-    _fill_govinfo(govinfo, [2005], days_per_year=25)
+    _fill_govinfo(govinfo, [y for y in OVERLAP_YEARS if y != 2012])
+    _fill_govinfo(govinfo, [2012], days_per_year=25)
     _fill_gentzkow(gentzkow, OVERLAP_YEARS, calibrate_splice.MIN_GENTZKOW_SPEECHES_PER_YEAR)
     with pytest.raises(OverlapIncompleteError) as exc:
         require_complete_overlap(gentzkow, govinfo)
-    assert "2005" in str(exc.value)
+    assert "2012" in str(exc.value)
 
 
 def test_a_uniformly_partial_govinfo_cache_blocks_the_verdict(tmp_path):
@@ -130,12 +133,12 @@ def test_a_missing_gentzkow_year_blocks_the_verdict(tmp_path):
 def test_the_error_names_the_offending_years_not_just_a_count(tmp_path):
     """After hours of downloading, "the cache is incomplete" is not actionable."""
     govinfo, gentzkow = tmp_path / "gov", tmp_path / "gen"
-    _fill_govinfo(govinfo, [y for y in OVERLAP_YEARS if y not in (1998, 2003)])
+    _fill_govinfo(govinfo, [y for y in OVERLAP_YEARS if y not in (1998, 2013)])
     _fill_gentzkow(gentzkow, OVERLAP_YEARS, calibrate_splice.MIN_GENTZKOW_SPEECHES_PER_YEAR)
     with pytest.raises(OverlapIncompleteError) as exc:
         require_complete_overlap(gentzkow, govinfo)
     message = str(exc.value)
-    assert "1998" in message and "2003" in message
+    assert "1998" in message and "2013" in message
 
 
 def test_an_empty_cache_blocks_the_verdict(tmp_path):

@@ -37,15 +37,12 @@ from pathlib import Path
 import pandas as pd
 
 from calibrate_splice import (
+    CALIBRATION_YEARS,
     OVERLAP_END_YEAR,
     govinfo_only_message,
     resolve_strategy,
 )
-from congress_cache import (
-    MIN_REAL_DAYS_PER_YEAR,
-    govinfo_range_usable,
-    iter_govinfo_days,
-)
+from congress_cache import govinfo_years_usable, iter_govinfo_days
 from congress_speakers import SPEAKER_RE, split_turns
 from congress_tokenize import count_term, top_companions
 from twl_common import (
@@ -368,16 +365,16 @@ def main() -> int:
     # Senate business: nato, state, all, one, richard, whereas, united, states,
     # hezbollah, washington. build_congress_senators already used a per-year
     # floor; it was never applied back here.
-    usable, bad_years = govinfo_range_usable(
-        CONGRESS_RAW_GOVINFO, govinfo_start, mentions_end
-    )
+    required = sorted(set(CALIBRATION_YEARS) | set(range(govinfo_start, mentions_end + 1)))
+    usable, bad_years = govinfo_years_usable(CONGRESS_RAW_GOVINFO, required)
     if not usable:
         missing.append(
-            f"  - GovInfo cache missing or incomplete for {govinfo_start}-"
-            f"{mentions_end} (need >= {MIN_REAL_DAYS_PER_YEAR} real cached days "
-            f"per year; short or absent: {bad_years}): {CONGRESS_RAW_GOVINFO}\n"
+            f"  - GovInfo cache incomplete. Missing or short: {bad_years}\n"
+            f"    Required: {list(CALIBRATION_YEARS)} (splice calibration "
+            f"sample) plus {govinfo_start}-{mentions_end} (the data).\n"
+            f"    Cache: {CONGRESS_RAW_GOVINFO}\n"
             "    Produce it with: python scripts/fetch_congress_govinfo.py "
-            f"--start-year {govinfo_start} --end-year {mentions_end}"
+            f"--start-year 2010 --end-year {mentions_end}"
         )
     if missing:
         print(
