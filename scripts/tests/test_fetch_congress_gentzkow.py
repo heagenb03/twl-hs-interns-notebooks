@@ -245,6 +245,27 @@ def test_extract_congress_raises_clear_error_when_descr_missing_chamber_column(
 # --------------------------------------------------------------- output shape
 
 
+def test_speech_text_with_leading_quote_is_not_corrupted(tmp_path: Path):
+    # hein-daily is plain pipe-delimited with NO csv-style quoting, and
+    # senators quote constantly. csv's default quoting treats a leading '"'
+    # as the start of a quoted field -- stripping it, and on an unbalanced
+    # quote, swallowing subsequent lines into one field. That silently
+    # merges rows and corrupts the speech_id join, which is exactly the
+    # silent-drop failure mode this task exists to prevent. This is the
+    # discriminating test: it fails under default csv quoting and passes
+    # under QUOTE_NONE.
+    quoted_text = '"We must act," she said, "before it is too late."'
+    speeches = [{"speech_id": "1010001", "speech": quoted_text}]
+    descr = [{"speech_id": "1010001", "chamber": "S", "date": "19890103"}]
+    archive = _make_archive(tmp_path, "101", speeches, descr, speaker_map=None)
+    with zipfile.ZipFile(archive) as zf:
+        counts = extract_congress(zf, "101", tmp_path)
+
+    assert counts["written"] == 1
+    out = _read_jsonl(tmp_path / "speeches_senate_101.jsonl")
+    assert out[0]["text"] == quoted_text
+
+
 def test_output_jsonl_shape_matches_downstream_contract(tmp_path: Path):
     speeches = [{"speech_id": "1010001", "speech": "remarks about tariffs"}]
     descr = [{"speech_id": "1010001", "chamber": "S", "date": "19890103"}]

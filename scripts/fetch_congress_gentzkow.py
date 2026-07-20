@@ -67,7 +67,14 @@ def read_pipe_table(
     header lacks any column in `required_columns`.
     """
     text = handle.read().decode("utf-8", errors="replace").splitlines()
-    reader = csv.DictReader(text, delimiter="|")
+    # QUOTE_NONE: the hein-daily format is plain pipe-delimited with no
+    # csv-style quoting. Speech text is full of literal '"' characters
+    # (senators quote constantly); csv's default quoting treats a leading
+    # '"' as the start of a quoted field, stripping it and, on an unbalanced
+    # quote, consuming following lines into one field - silently merging
+    # rows and corrupting the speech_id join. QUOTE_NONE makes '|' the only
+    # delimiter that matters and '"' just another character.
+    reader = csv.DictReader(text, delimiter="|", quoting=csv.QUOTE_NONE)
     fieldnames = list(reader.fieldnames or [])
     missing = [c for c in required_columns if c not in fieldnames]
     if missing:
