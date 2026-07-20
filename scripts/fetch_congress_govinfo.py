@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import time
@@ -54,6 +55,23 @@ PHANTOM_SKIP_RATE_THRESHOLD = 0.15
 # sitemap outage yields `days == []`, the rate gate divides by nothing, and
 # the year passes as a silent no-op.
 MIN_DAYS_FOR_SANITY_CHECK = 20
+
+
+class GranuleFetchError(Exception):
+    """A granule's text endpoint served an error page instead of the Record.
+
+    Same HTTP-200-with-an-error-body behaviour as PhantomPackageError, but on
+    the granule text endpoint and requiring the opposite detection (see
+    is_granule_page). Kept as a distinct type because the two mean different
+    things: a phantom package is a sitemap artefact and expected at a low
+    rate, whereas a granule listed in a real day's MODS that will not fetch
+    means that day is incomplete and must not be cached as if it were whole.
+    """
+
+    def __init__(self, pkg: str, granule_id: str) -> None:
+        super().__init__(f"{pkg}: granule {granule_id} returned an error page")
+        self.pkg = pkg
+        self.granule_id = granule_id
 
 
 class PhantomPackageError(Exception):
@@ -141,17 +159,49 @@ def senate_granules(pkg: str) -> list[dict]:
     return out
 
 
+def is_granule_page(html: str) -> bool:
+    """True if `html` is a real CREC granule page rather than GovInfo's 404.
+
+    The granule endpoint has the same 200-with-an-error-page behaviour as the
+    MODS endpoint, but it CANNOT be detected the same way. MODS legitimately
+    serves XML, so "the body is HTML" is a valid phantom signal there. Granule
+    pages legitimately ARE HTML, so that same sniff would reject every real
+    granule and silently yield an empty corpus -- a worse outcome than the bug
+    it was meant to fix.
+
+    The discriminator is the <pre> block holding the Record text. Verified
+    present in all four committed fixtures (1999, 2019, 2021, 2023) and absent
+    from GovInfo's "Page Not Found" page, which strips to ~25k characters of
+    plausible-looking prose that would otherwise be written straight into the
+    cache as floor speech.
+    """
+    return "<pre>" in html.lower()
+
+
 def fetch_day(pkg: str, out_path: Path) -> None:
-    """Fetch and write one CREC day. Propagates PhantomPackageError as-is
-    so callers can distinguish it from other failures."""
+    """Fetch and write one CREC day.
+
+    Propagates PhantomPackageError as-is so callers can distinguish it from
+    other failures, and raises GranuleFetchError if any granule comes back as
+    an error page. The day is NOT written when a granule fails: a partially
+    written day would be cached, skipped by the resume logic, and silently
+    treated as complete forever after.
+    """
     granules = senate_granules(pkg)
     for granule in granules:
         url = GOVINFO_HTML_URL.format(pkg=pkg, granule=granule["granule_id"])
-        granule["text"] = re.sub(r"<[^>]+>", "", get(url).text)
-    out_path.write_text(
+        html = get(url).text
+        if not is_granule_page(html):
+            raise GranuleFetchError(pkg, granule["granule_id"])
+        granule["text"] = re.sub(r"<[^>]+>", "", html)
+    # Write via a temp file and atomically replace, so a kill mid-write cannot
+    # leave a truncated day that out_path.exists() reports as complete.
+    tmp_path = out_path.with_suffix(".json.partial")
+    tmp_path.write_text(
         json.dumps({"package": pkg, "granules": granules}, ensure_ascii=False),
         encoding="utf-8",
     )
+    os.replace(tmp_path, out_path)
 
 
 def _phantom_marker_path(year_dir: Path, pkg: str) -> Path:
@@ -172,6 +222,7 @@ def main() -> int:
     args = parser.parse_args()
 
     run_skipped: dict[int, list[str]] = {}
+    run_failed: dict[int, list[str]] = {}
 
     for year in range(args.start_year, args.end_year + 1):
         year_dir = CONGRESS_RAW_GOVINFO / str(year)
@@ -198,6 +249,7 @@ def main() -> int:
             return 1
 
         skipped: list[str] = []
+        failed: list[str] = []
         # Phantoms are buffered, NOT written to disk as we go. A marker makes
         # every future run skip that day, so writing one during an outage --
         # when every day looks phantom -- would permanently poison the cache:
@@ -220,6 +272,14 @@ def main() -> int:
                 skipped.append(pkg)
                 print(f"  skip {pkg}: phantom package (HTML instead of MODS XML)")
                 continue
+            except GranuleFetchError as exc:
+                # Deliberately NOT marker-written: unlike a phantom package, a
+                # granule listed in a real day's MODS should exist, so this is
+                # more likely transient than permanent. Leaving it unmarked and
+                # unwritten means a later run retries the whole day.
+                failed.append(pkg)
+                print(f"  FAIL {pkg}: {exc} -- day not cached, will retry")
+                continue
             else:
                 if marker_path.exists():
                     # A --refresh run found this package now exists after
@@ -230,22 +290,33 @@ def main() -> int:
                 print(f"  {year}: {i}/{len(days)}")
 
         run_skipped[year] = skipped
+        run_failed[year] = failed
         skip_rate = len(skipped) / len(days)
         print(f"{year}: {len(skipped)}/{len(days)} days skipped as phantom ({skip_rate:.1%})")
         if skipped:
             print(f"  phantom package ids: {', '.join(skipped)}")
-
-        if skip_rate > PHANTOM_SKIP_RATE_THRESHOLD:
+        if failed:
             print(
-                f"ABORT: {year} phantom-skip rate {skip_rate:.1%} exceeds the "
+                f"{year}: {len(failed)}/{len(days)} days FAILED on granule text "
+                f"and were not cached: {', '.join(failed)}"
+            )
+
+        # Granule failures count toward the same gate. A granule-layer outage
+        # produces no PhantomPackageError at all, so without this the year would
+        # report 0% phantom and pass as clean while every day silently failed.
+        bad_rate = (len(skipped) + len(failed)) / len(days)
+        if bad_rate > PHANTOM_SKIP_RATE_THRESHOLD:
+            print(
+                f"ABORT: {year} bad-day rate {bad_rate:.1%} exceeds the "
                 f"{PHANTOM_SKIP_RATE_THRESHOLD:.0%} sanity threshold "
-                f"({len(skipped)}/{len(days)} days). The only measured "
-                "real-world rate is ~1.4% (2023: 3/209 days); a rate this "
-                "high likely means GovInfo is having an outage or has "
-                "changed its URL scheme, not that this many days are "
-                "legitimately missing phantom packages. Aborting instead of "
-                "silently producing an incomplete corpus. No phantom markers "
-                "were written, so a later healthy run will retry these days."
+                f"({len(skipped)} phantom + {len(failed)} granule-failed "
+                f"of {len(days)} days). The only measured real-world phantom "
+                "rate is ~1.4% (2023: 3/209 days); a rate this high likely "
+                "means GovInfo is having an outage or has changed its URL "
+                "scheme, not that this many days are legitimately bad. "
+                "Aborting instead of silently producing an incomplete corpus. "
+                "No phantom markers were written, so a later healthy run will "
+                "retry these days."
             )
             return 1
 
@@ -260,11 +331,20 @@ def main() -> int:
             )
 
     total_skipped = sum(len(pkgs) for pkgs in run_skipped.values())
-    print(f"Run complete: {total_skipped} phantom day(s) skipped this run")
+    total_failed = sum(len(pkgs) for pkgs in run_failed.values())
+    print(
+        f"Run complete: {total_skipped} phantom day(s) skipped, "
+        f"{total_failed} day(s) failed on granule text and left uncached."
+    )
     for year, pkgs in run_skipped.items():
         if pkgs:
-            print(f"  {year}: {', '.join(pkgs)}")
-    return 0
+            print(f"  phantom {year}: {', '.join(pkgs)}")
+    for year, pkgs in run_failed.items():
+        if pkgs:
+            print(f"  FAILED  {year}: {', '.join(pkgs)} -- re-run to retry")
+    # Non-zero exit on any failed day: this is an unattended job, and a caller
+    # that sees exit 0 is entitled to assume the range is complete.
+    return 1 if total_failed else 0
 
 
 if __name__ == "__main__":
