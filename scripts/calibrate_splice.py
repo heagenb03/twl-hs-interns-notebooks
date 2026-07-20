@@ -20,6 +20,12 @@ import statistics
 import sys
 from pathlib import Path
 
+from congress_cache import (
+    MIN_REAL_DAYS_PER_YEAR,
+    govinfo_range_usable,
+    iter_govinfo_days,
+    real_day_counts,
+)
 from congress_tokenize import count_term
 from twl_common import CONGRESS_RAW_GENTZKOW, CONGRESS_RAW_GOVINFO
 
@@ -29,6 +35,20 @@ STABLE_CV = 0.10         # coefficient of variation of the ratio under 10% -> sc
 OVERLAP_START_YEAR = 1994
 OVERLAP_END_YEAR = 2016  # inclusive
 TERM = "china"
+
+MIN_GENTZKOW_SPEECHES_PER_YEAR = 500
+"""Floor for calling a Gentzkow overlap year usable.
+
+The Senate produces tens of thousands of speech records a year in hein-daily,
+so 500 is a tripwire for a truncated extract, not a volume model. It exists
+because a truncated Gentzkow half fakes the C2 trap from the other side: it
+makes GovInfo look uniformly LARGER, which is just as stable and just as
+certifiable as the interrupted-GovInfo case.
+"""
+
+
+class OverlapIncompleteError(RuntimeError):
+    """Raised when the overlap window is too thin to calibrate a verdict on."""
 
 
 def compare_overlap(
@@ -40,15 +60,27 @@ def compare_overlap(
     if not years:
         raise ValueError("no overlapping years to calibrate on")
 
+    zero_years = [y for y in years if not gentzkow_by_year[y]]
+    if zero_years:
+        # An inf ratio propagates into statistics.pstdev and surfaces as a bare
+        # AttributeError that names neither the year nor the cause -- after
+        # hours of downloading. Fail legibly instead.
+        raise ValueError(
+            f"gentzkow reports zero '{TERM}' mentions in {zero_years}, so the "
+            "ratio for those years is undefined. A real Senate year is never "
+            "silent on China, so this means the Gentzkow extract is truncated "
+            "or mis-parsed for those years, not that the Senate said nothing."
+        )
+
     per_year = []
     ratios = []
     rel_diffs = []
     for year in years:
         g = gentzkow_by_year[year]
         v = govinfo_by_year[year]
-        ratio = v / g if g else float("inf")
+        ratio = v / g
         ratios.append(ratio)
-        rel_diffs.append(abs(v - g) / g if g else float("inf"))
+        rel_diffs.append(abs(v - g) / g)
         per_year.append({"year": year, "gentzkow": g, "govinfo": v, "ratio": ratio})
 
     mean_ratio = statistics.fmean(ratios)
@@ -92,28 +124,29 @@ def choose_strategy(comparison: dict) -> str:
 
 def _govinfo_china_counts_by_year(
     raw_dir: Path, start_year: int, end_year: int
-) -> dict[int, int]:
+) -> tuple[dict[int, int], dict[str, int]]:
     """Count `china` mentions per year in the GovInfo raw cache.
 
-    Reads data/_raw/congress_govinfo/{year}/{package}.json. Each year's
-    directory also holds `{package}.phantom.json` marker files recording
-    packages that never existed (see fetch_congress_govinfo.py); those have
-    no "granules" key and must be excluded from a naive `*.json` glob.
+    Walks via congress_cache.iter_govinfo_days, the one shared walker, so the
+    verdict this module RECORDS and the splice build_congress_mentions APPLIES
+    are computed from the same traversal. They previously came from two
+    different implementations with different phantom filters and different
+    error behaviour.
+
+    A year only gets a key if its directory exists on disk, so a wholly
+    missing year stays absent from the comparison rather than entering it as
+    zero mentions.
     """
-    counts: dict[int, int] = {}
-    for year in range(start_year, end_year + 1):
-        year_dir = raw_dir / str(year)
-        if not year_dir.is_dir():
-            continue
-        total = 0
-        for path in sorted(year_dir.glob("*.json")):
-            if path.name.endswith(".phantom.json"):
-                continue
-            day = json.loads(path.read_text(encoding="utf-8"))
-            for granule in day.get("granules", []):
-                total += count_term(granule.get("text", ""), TERM)
-        counts[year] = total
-    return counts
+    skips: dict[str, int] = {}
+    counts = {
+        year: 0
+        for year in range(start_year, end_year + 1)
+        if (raw_dir / str(year)).is_dir()
+    }
+    for day in iter_govinfo_days(raw_dir, start_year, end_year, skips):
+        for granule in day.granules:
+            counts[day.year] += count_term(granule.get("text", ""), TERM)
+    return counts, skips
 
 
 def _gentzkow_china_counts_by_year(
@@ -146,22 +179,101 @@ def _gentzkow_china_counts_by_year(
     return counts
 
 
-def _govinfo_overlap_years_present(raw_dir: Path, start_year: int, end_year: int) -> bool:
-    """True if at least one non-phantom day exists for a year in the overlap.
+def _gentzkow_speech_counts_by_year(
+    raw_dir: Path, start_year: int, end_year: int
+) -> dict[int, int]:
+    """Speech records per year in the Gentzkow cache, every year in range.
 
-    A bare `any(raw_dir.iterdir())` would be satisfied by an unrelated
-    partial cache (e.g. a 2023-only download) that has nothing in the
-    1994-2016 overlap window this calibration actually needs.
+    Counts RECORDS, not china mentions: this measures how much corpus is
+    present, which is the question the completeness gate asks. A year with
+    genuinely few china mentions is a finding; a year with almost no speeches
+    at all is a truncated extract.
     """
-    for year in range(start_year, end_year + 1):
-        year_dir = raw_dir / str(year)
-        if not year_dir.is_dir():
-            continue
-        if any(
-            p for p in year_dir.glob("*.json") if not p.name.endswith(".phantom.json")
-        ):
-            return True
-    return False
+    counts = {year: 0 for year in range(start_year, end_year + 1)}
+    for path in sorted(raw_dir.glob("speeches_senate_*.jsonl")):
+        with path.open(encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                date = record.get("date", "")
+                if len(date) < 4 or not date[:4].isdigit():
+                    continue
+                year = int(date[:4])
+                if start_year <= year <= end_year:
+                    counts[year] += 1
+    return counts
+
+
+def require_complete_overlap(
+    gentzkow_dir: Path,
+    govinfo_dir: Path,
+    start_year: int = OVERLAP_START_YEAR,
+    end_year: int = OVERLAP_END_YEAR,
+) -> None:
+    """Raise unless BOTH caches cover every overlap year at usable depth.
+
+    This is C2's gate, and it has to live here rather than inside
+    choose_strategy, because the statistics cannot see the problem. A
+    uniformly partial cache yields a perfectly stable ratio -- cv 0.0000 --
+    which is the signature choose_strategy reads as maximum confidence. The
+    ratios really are stable; the counts really are what the cache contains.
+    Only the cache itself knows it is incomplete.
+
+    Presence is not completeness. A presence check passes a single leftover
+    smoke-test day, and it also passes a uniformly partial download in which
+    every year is present and every year is 2% fetched.
+
+    Both sides are gated. An interrupted GovInfo fetch makes GovInfo look
+    uniformly smaller; a truncated Gentzkow extract makes it look uniformly
+    larger. Both are stable, both certify a `scale` join, and `scale` is the
+    one branch that actively rewrites the numbers -- so both manufacture a
+    step change at exactly 2017, which is exactly where Beat 1's headline
+    finding lives.
+    """
+    problems = []
+
+    _, bad_govinfo = govinfo_range_usable(govinfo_dir, start_year, end_year)
+    if bad_govinfo:
+        counts = real_day_counts(govinfo_dir, start_year, end_year)
+        detail = ", ".join(f"{y} ({counts[y]} day(s))" for y in bad_govinfo)
+        problems.append(
+            f"  - GovInfo: {len(bad_govinfo)} of "
+            f"{end_year - start_year + 1} overlap year(s) below "
+            f"{MIN_REAL_DAYS_PER_YEAR} real cached days: {detail}"
+        )
+
+    gentzkow_counts = _gentzkow_speech_counts_by_year(
+        gentzkow_dir, start_year, end_year
+    )
+    bad_gentzkow = sorted(
+        y for y, n in gentzkow_counts.items() if n < MIN_GENTZKOW_SPEECHES_PER_YEAR
+    )
+    if bad_gentzkow:
+        detail = ", ".join(f"{y} ({gentzkow_counts[y]} speech(es))" for y in bad_gentzkow)
+        problems.append(
+            f"  - Gentzkow: {len(bad_gentzkow)} of "
+            f"{end_year - start_year + 1} overlap year(s) below "
+            f"{MIN_GENTZKOW_SPEECHES_PER_YEAR} speech records: {detail}"
+        )
+
+    if problems:
+        raise OverlapIncompleteError(
+            f"The {start_year}-{end_year} overlap is too thin to calibrate a "
+            "splice verdict on:\n" + "\n".join(problems) + "\n\n"
+            "This is not a warning. A partially-fetched overlap yields a "
+            "PERFECTLY STABLE ratio (cv 0.0000), which choose_strategy reads "
+            "as maximum confidence and certifies as a `scale` join -- and "
+            "`scale` rewrites every pre-2017 count, manufacturing a step "
+            "change at exactly 2017 that is indistinguishable from the "
+            "notebook's headline finding.\n"
+            "Re-run the fetch script(s) to completion. Do not lower the "
+            "floors to get past this."
+        )
 
 
 def main() -> int:
@@ -173,9 +285,7 @@ def main() -> int:
             f"  - Gentzkow cache missing or empty: {CONGRESS_RAW_GENTZKOW}\n"
             "    Produce it with: python scripts/fetch_congress_gentzkow.py"
         )
-    if not CONGRESS_RAW_GOVINFO.exists() or not _govinfo_overlap_years_present(
-        CONGRESS_RAW_GOVINFO, OVERLAP_START_YEAR, OVERLAP_END_YEAR
-    ):
+    if not CONGRESS_RAW_GOVINFO.exists():
         missing.append(
             f"  - GovInfo cache missing or empty for {OVERLAP_START_YEAR}-"
             f"{OVERLAP_END_YEAR}: {CONGRESS_RAW_GOVINFO}\n"
@@ -193,6 +303,12 @@ def main() -> int:
         )
         return 1
 
+    try:
+        require_complete_overlap(CONGRESS_RAW_GENTZKOW, CONGRESS_RAW_GOVINFO)
+    except OverlapIncompleteError as exc:
+        print(f"Cannot run the splice calibration.\n\n{exc}")
+        return 1
+
     print(
         f"Counting '{TERM}' mentions per year, "
         f"{OVERLAP_START_YEAR}-{OVERLAP_END_YEAR}..."
@@ -200,22 +316,17 @@ def main() -> int:
     gentzkow_by_year = _gentzkow_china_counts_by_year(
         CONGRESS_RAW_GENTZKOW, OVERLAP_START_YEAR, OVERLAP_END_YEAR
     )
-    govinfo_by_year = _govinfo_china_counts_by_year(
+    govinfo_by_year, govinfo_skips = _govinfo_china_counts_by_year(
         CONGRESS_RAW_GOVINFO, OVERLAP_START_YEAR, OVERLAP_END_YEAR
     )
+    if govinfo_skips:
+        print(
+            "GovInfo cache skipped: "
+            + ", ".join(f"{n} {reason}" for reason, n in sorted(govinfo_skips.items()))
+        )
 
     comparison = compare_overlap(gentzkow_by_year, govinfo_by_year)
     strategy = choose_strategy(comparison)
-
-    expected_years = OVERLAP_END_YEAR - OVERLAP_START_YEAR + 1
-    if len(comparison["years"]) < expected_years:
-        print(
-            f"WARNING: only {len(comparison['years'])}/{expected_years} overlap "
-            "years have data in both caches. The verdict below is calibrated on "
-            "a partial overlap, not the full 1994-2016 window -- this usually "
-            "means a fetch was interrupted. Re-run the fetch script(s) to "
-            "completion before trusting this verdict."
-        )
 
     print(f"{'year':>6}  {'gentzkow':>10}  {'govinfo':>10}  {'ratio':>8}")
     for row in comparison["per_year"]:
