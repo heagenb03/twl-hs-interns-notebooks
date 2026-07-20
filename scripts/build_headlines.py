@@ -39,6 +39,24 @@ _SPACE_BEFORE_PUNCT = re.compile(r"\s+([,.;:!?%])")
 _TOKENIZED_HYPHEN = re.compile(r"(?<=\w) - (?=\w)")
 _TOKENIZED_POSSESSIVE = re.compile(r"\s+'s\b")
 
+# GDELT also leaves the tokenizer space AFTER a period between initials
+# ("U . S ." becomes "U. S." once _SPACE_BEFORE_PUNCT runs, but the space
+# between "U." and "S." survives). This rule joins a single uppercase letter
+# + period to an immediately following single uppercase letter + period
+# ("U. S." -> "U.S.", "F. C. C." -> "F.C.C."), via a lookahead so runs of
+# 2+ initials cascade in one non-overlapping pass.
+#
+# It cannot fire on a real sentence boundary ("Trade talks stall. China
+# responds"): the capture group only matches a SINGLE uppercase letter that
+# is not preceded by another letter (?<![A-Za-z]), so a period ending an
+# ordinary multi-letter word (e.g. "stall.") never matches -- the letter
+# immediately before that period ("l") is lowercase and/or part of a longer
+# token, not a standalone initial. The lookahead additionally requires the
+# very next token to itself be a single uppercase letter followed by a
+# period, so "Deal. A New Era" (a lone capital word after the period) will
+# not match either, since "A" alone isn't followed by ".".
+_TOKENIZED_INITIALS = re.compile(r"(?<![A-Za-z])([A-Z])\.\s+(?=[A-Z]\.)")
+
 # GDELT's "(china OR chinese)" query matches the ARTICLE BODY, not the title, so
 # roughly half the fetched headlines are unrelated to China or trade. Worse, the
 # off-topic rate varies by outlet, which would let the notebook's outlet classifier
@@ -57,6 +75,7 @@ def clean_title(title: str) -> str:
     cleaned = _SPACE_BEFORE_PUNCT.sub(r"\1", cleaned)
     cleaned = _TOKENIZED_HYPHEN.sub("-", cleaned)
     cleaned = _TOKENIZED_POSSESSIVE.sub("'s", cleaned)
+    cleaned = _TOKENIZED_INITIALS.sub(r"\1.", cleaned)
     return re.sub(r"\s+", " ", cleaned).strip()
 
 

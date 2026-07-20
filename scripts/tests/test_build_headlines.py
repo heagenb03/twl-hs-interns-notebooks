@@ -146,6 +146,25 @@ def test_on_topic_headline_is_kept():
     assert out.iloc[0]["headline"] == "China Trade Deal Reached"
 
 
+def test_clean_title_collapses_spaced_initials():
+    assert clean_title("Warns U. S. Treasury") == "Warns U.S. Treasury"
+
+
+def test_clean_title_collapses_three_spaced_initials():
+    assert clean_title("F. C. C. Joins Push") == "F.C.C. Joins Push"
+
+
+def test_clean_title_leaves_sentence_boundary_alone():
+    """Two single-letter-initial fix must not merge across a real sentence
+    boundary, where a full word ends in a period and the next word (which
+    happens to start with a capital) is unrelated."""
+    assert clean_title("Trade talks stall. China responds") == "Trade talks stall. China responds"
+
+
+def test_clean_title_is_idempotent_on_already_joined_initials():
+    assert clean_title("U.S. Treasury Secretary Speaks") == "U.S. Treasury Secretary Speaks"
+
+
 def test_detokenization_runs_before_dedup():
     """Two raw titles differing only by tokenization spacing must collapse
     into a single row -- dedup has to run on the DE-TOKENIZED headline."""
