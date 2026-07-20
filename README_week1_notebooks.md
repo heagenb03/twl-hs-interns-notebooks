@@ -3,10 +3,10 @@
 ## The set
 | Notebook | Data files | Pip installs in Colab | Anchor numbers |
 |---|---|---|---|
-| `bill_classifier.ipynb` | `bills_china.csv` | sentence-transformers | **Estimates, recapture** |
+| `bill_classifier.ipynb` | `bills_china.csv` | sentence-transformers | **Estimates, needs recapture** |
 | `congress_mentions.ipynb` | `congress_mentions.csv`, `congress_companions.csv`, `congress_senators.csv` | none | **Real** (deterministic data) |
 | `tariff_event_study.ipynb` | `tariff_prices.csv` | none | **Real** (deterministic data) |
-| `media_framing.ipynb` | `headlines.csv` | sentence-transformers, vaderSentiment | Beat 1 sentiment: **real**. Beat 2/3 classifier: **estimates, recapture** |
+| `media_framing.ipynb` | `headlines.csv` | sentence-transformers, vaderSentiment | Beat 1 sentiment: **real**. Beat 2/3 classifier: **estimates, needs recapture** |
 
 All four follow the approved template: personal-copy intro (Drive distribution model),
 ▶️ JUST RUN vs ✏️ YOUR TURN cells, anchor block + likely-error hint + Ctrl+Z recovery

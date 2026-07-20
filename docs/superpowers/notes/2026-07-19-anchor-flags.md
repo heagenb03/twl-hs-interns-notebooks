@@ -32,11 +32,11 @@ media_framing.ipynb [cell 14] > **What you should see:** an accuracy line — li
 `NN-NN%` ranges (the `%` is required by its pattern). I ran two follow-up sweeps over
 blockquote lines to check what that pattern could miss:
 
-1. Unicode ellipsis (`…`), `TBD`/`XX`/`N/A`, `to`-style ranges, and hedge words
-   (`somewhere`, `roughly`, `approximately`, `around`). This turned up three hits,
-   all false positives on closer reading — each already contains a specific
-   captured-looking number and the hedge word is just softening language, not
-   marking an unfilled placeholder:
+1. Unicode ellipsis (`…`), `TBD`/`XX`/`N/A`, and hedge words (`somewhere`,
+   `roughly`, `approximately`, `around`) — see correction below re: `to`-style
+   ranges. This turned up three hits, all false positives on closer reading —
+   each already contains a specific captured-looking number and the hedge word
+   is just softening language, not marking an unfilled placeholder:
    - `bill_classifier.ipynb` cell 7 — "roughly half the bills are labeled `1`" —
      describes a fixed property of the input CSV, not a model output pending a run.
    - `media_framing.ipynb` cell 11 — "roughly `NYT: -0.21 WSJ: -0.11 Fox: +0.05
@@ -45,6 +45,17 @@ blockquote lines to check what that pattern could miss:
    - `tariff_event_study.ipynb` cell 12 — "roughly `-2.7%` versus `+1.2%`" —
      specific numbers present; per the README, congress/tariff anchors are captured
      from real deterministic data and "should match as-is."
+
+   **Correction:** despite the label above, this sweep's actual regex did not
+   match `to`-style ranges (no pattern here joins two numbers across the word
+   `to`) — only the dash-joined and hedge-word cases were truly covered.
+   `to`-style ranges were checked manually instead, and one genuine instance
+   turned up: `tariff_event_study.ipynb` cell 15 — "day-0 moves around
+   `-1.6%` to `-3%` depending on ticker" and "around `-0.3%` to `+0.1%`".
+   Both are real captured spreads across tickers (not unfilled placeholders):
+   per the README, tariff anchors come from real deterministic data, and a
+   range across six tickers is the expected shape of that data, not a
+   pending-run gap.
 
 2. A number-range check with no `%` requirement (`\d+(\.\d+)?\s*[–-]\s*\d+(\.\d+)?`),
    to catch ranges on non-percent metrics that the original script's pattern would
@@ -61,7 +72,7 @@ No additional genuine flags beyond the six now in the table below.
 | Notebook | Cell | Anchor text | Why it's suspect |
 |---|---|---|---|
 | `bill_classifier.ipynb` | 10 | "a progress bar, then two lines ending with an accuracy percentage — likely somewhere in the 80–95% range." | range instead of a captured value |
-| `bill_classifier.ipynb` | 17 | "a 12-row table of bill titles with confidence scores hovering near `0.4–0.6`" | range instead of a captured value — **caveat:** this describes a spread across 12 different rows rather than one metric collapsing to a single number, so a real run may legitimately still show a range here. Still an estimate per the README (bill_classifier is "Estimates, recapture"), so worth Heagen's spot-check. |
+| `bill_classifier.ipynb` | 17 | "a 12-row table of bill titles with confidence scores hovering near `0.4–0.6`" | range instead of a captured value — **caveat:** this describes a spread across 12 different rows rather than one metric collapsing to a single number, so a real run may legitimately still show a range here. Still an estimate per the README (bill_classifier is "Estimates, needs recapture"), so worth Heagen's spot-check. |
 | `bill_classifier.ipynb` | 23 | "a numbered table (rows 0, 1, 2, ...) of bill titles with their human labels." | literal ellipsis placeholder — **caveat:** likely a false positive; the `...` here reads as a generic "row 0, 1, 2, and so on" enumeration, not an unfilled data value. Flagged because it matches the pattern; Heagen should confirm during his pass whether it needs any change at all. |
 | `congress_mentions.ipynb` | 9 | "`'china': 210 mentions in 1990 → 1048 in 2024 (peak: ...)`" | literal ellipsis placeholder — the peak value was never filled in |
 | `congress_mentions.ipynb` | 17 | "`Marco Rubio peaked at ... mentions in 20...`" | literal ellipsis placeholder — both the peak count and peak year are unfilled |

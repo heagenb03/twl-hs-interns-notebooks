@@ -11,6 +11,7 @@ import argparse
 import json
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -103,13 +104,53 @@ def snapshot(nb: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _code_cell_indices(cell_types: list[str]) -> list[int]:
+    return [i for i, t in enumerate(cell_types) if t == "code"]
+
+
 def check(before: dict[str, Any], after: dict[str, Any]) -> tuple[list[str], list[str]]:
     errs: list[str] = []
     info: list[str] = []
 
-    for key in ("n_cells", "cell_types", "code", "outputs", "markers", "headers"):
+    # "blockquotes" is included here (not just diffed via set() below) so that
+    # a pure reorder, or deleting one of two identical lines, is still a hard
+    # error even though those cases are invisible to a set-difference.
+    for key in ("n_cells", "cell_types", "outputs", "blockquotes"):
         if before[key] != after[key]:
             errs.append(f"{key} changed")
+
+    if before["code"] != after["code"]:
+        if len(before["code"]) != len(after["code"]):
+            errs.append(
+                f"code changed: code-cell count {len(before['code'])} -> {len(after['code'])}"
+            )
+        else:
+            idx_map = _code_cell_indices(after["cell_types"]) or _code_cell_indices(
+                before["cell_types"]
+            )
+            diff_idx = [
+                idx_map[pos] if pos < len(idx_map) else f"pos{pos}"
+                for pos, (b, a) in enumerate(zip(before["code"], after["code"]))
+                if b != a
+            ]
+            errs.append(f"code changed in cell index(es): {diff_idx}")
+
+    if before["headers"] != after["headers"]:
+        pairs = []
+        for i in range(max(len(before["headers"]), len(after["headers"]))):
+            b = before["headers"][i] if i < len(before["headers"]) else "<missing>"
+            a = after["headers"][i] if i < len(after["headers"]) else "<missing>"
+            if b != a:
+                pairs.append(f"#{i} {b!r} -> {a!r}")
+        errs.append("headers changed: " + "; ".join(pairs))
+
+    if before["markers"] != after["markers"]:
+        pairs = [
+            f"{m!r} {before['markers'].get(m)}->{after['markers'].get(m)}"
+            for m in MARKERS
+            if before["markers"].get(m) != after["markers"].get(m)
+        ]
+        errs.append("markers changed: " + "; ".join(pairs))
 
     if before["blockquotes"] != after["blockquotes"]:
         b, a = set(before["blockquotes"]), set(after["blockquotes"])
@@ -118,11 +159,17 @@ def check(before: dict[str, Any], after: dict[str, Any]) -> tuple[list[str], lis
         for line in sorted(a - b):
             errs.append(f"blockquote line ADDED: {line}")
 
-    invented = sorted(set(after["numbers"]) - set(before["numbers"]))
+    # Counter (not set) so that deleting one of N duplicate numbers is
+    # visible: an increase in a number's count is an invention (hard error),
+    # a decrease is a legal removal (non-blocking INFO).
+    before_nums = Counter(before["numbers"])
+    after_nums = Counter(after["numbers"])
+
+    invented = sorted((after_nums - before_nums).elements())
     if invented:
         errs.append(f"invented numbers: {invented}")
 
-    removed = sorted(set(before["numbers"]) - set(after["numbers"]))
+    removed = sorted((before_nums - after_nums).elements())
     if removed:
         info.append(f"INFO numbers removed: {removed}")
 
