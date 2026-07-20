@@ -193,7 +193,11 @@ from pathlib import Path
 
 import pandas as pd
 
-from calibrate_splice import OVERLAP_END_YEAR
+from calibrate_splice import (
+    OVERLAP_END_YEAR,
+    govinfo_only_message,
+    resolve_strategy,
+)
 from congress_cache import (
     MIN_REAL_DAYS_PER_YEAR,
     govinfo_range_usable,
@@ -667,6 +671,51 @@ def build() -> pd.DataFrame:
     per this project's rule that dropped data must be reported, never
     silently discarded.
     """
+    # I1: this build answers to the same splice verdict as the other two.
+    #
+    # It previously did not consult calibrate_splice at all, so under a
+    # `govinfo_only` verdict build_congress_mentions would refuse while this
+    # build ran to completion over the very Gentzkow years mentions had just
+    # declared untrustworthy -- shipping the per-senator CSV on data the
+    # corpus CSV rejected.
+    #
+    # Resolved before any walking, so an unattended run refuses in seconds
+    # rather than after hours. resolve_strategy also applies the C2
+    # completeness gate.
+    strategy, comparison = resolve_strategy(CONGRESS_RAW_GENTZKOW, CONGRESS_RAW_GOVINFO)
+    print(f"calibrate_splice.choose_strategy: {strategy}")
+    if strategy == "govinfo_only":
+        raise RuntimeError(
+            govinfo_only_message(
+                "build_congress_senators",
+                "SENATOR_YEARS begins at 2010, so the entire 2010-2016 half of "
+                "Beat 3's chart comes from the Gentzkow corpus this verdict "
+                "abandons. build_congress_mentions stops on the same verdict; "
+                "the senator chart must not quietly ship instead.",
+            )
+        )
+    if strategy == "scale":
+        raise NotImplementedError(
+            f"calibrate_splice returned 'scale' (factor "
+            f"{comparison['mean_ratio']:.4f}), and whether to apply it to "
+            "per-senator counts is an OPEN DECISION for Heagen -- see I1.\n\n"
+            "SENATOR_YEARS is 2010-2024, so Beat 3 straddles the 2017 splice. "
+            "build_congress_mentions scales its pre-2017 counts by this "
+            "factor. If this build does not, Beat 1's corpus chart and Beat "
+            "3's senator chart disagree about the same years by exactly that "
+            "factor -- one shows a 2017 step the other does not.\n\n"
+            "Scaling here is NOT the automatic answer, which is why this "
+            "raises instead of guessing. Unlike the companions build, where a "
+            "uniform factor cannot reorder a top-ten and scaling is a no-op, "
+            "Beat 3 teaches interns to read the ABSOLUTE distance between a "
+            "senator's line and the Senate average, so the factor is visible "
+            "here. Against that: one china-derived factor would be applied "
+            "uniformly to 100 senators who do not each differ between the "
+            "corpora by the same ratio, and rounding small per-senator counts "
+            "under a factor below 1 collapses them to zero.\n\n"
+            "STOP and get Heagen's decision. Do not remove this guard to make "
+            "a build pass."
+        )
     start_year, end_year = min(SENATOR_YEARS), max(SENATOR_YEARS)
 
     roster, bio_to_lnf, serving_by_year, roster_skips = govinfo_bioguide_roster(

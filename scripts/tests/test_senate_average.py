@@ -27,7 +27,10 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 import build_congress_senators
+from calibrate_splice import OverlapIncompleteError
 from build_congress_senators import build_senators_frame, govinfo_bioguide_roster
 from congress_cache import write_manifest
 
@@ -267,6 +270,11 @@ def test_main_passes_the_gate_when_the_full_2010_2024_span_is_covered(
     out_path = tmp_path / "congress_senators.csv"
     monkeypatch.setattr(build_congress_senators, "OUT_PATH", out_path, raising=False)
 
-    build_congress_senators.main()
-    out = capsys.readouterr().out
-    assert "Cannot build congress_senators.csv" not in out
+    # The I6 cache gate passes for a 2010-2024 cache. What stops this fixture
+    # now is the NEXT gate: I1 made build() resolve the splice verdict, and
+    # that needs the 1994-2016 overlap, which this fixture does not cover.
+    # Asserting on WHICH gate fires is the point -- a bare "it failed" would
+    # pass even if the I6 fix regressed.
+    with pytest.raises(OverlapIncompleteError):
+        build_congress_senators.main()
+    assert "Cannot build congress_senators.csv" not in capsys.readouterr().out

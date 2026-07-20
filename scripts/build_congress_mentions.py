@@ -29,7 +29,8 @@ from calibrate_splice import (
     OVERLAP_START_YEAR,
     choose_strategy,
     compare_overlap,
-    require_complete_overlap,
+    govinfo_only_message,
+    resolve_strategy,
 )
 from congress_cache import (
     MIN_REAL_DAYS_PER_YEAR,
@@ -192,6 +193,29 @@ def build() -> pd.DataFrame:
     """
     start_year, end_year = min(MENTIONS_YEARS), max(MENTIONS_YEARS)
 
+    # The verdict is resolved BEFORE the full-corpus walk, not after it. Both
+    # orderings give the same answer, but this one refuses in seconds instead
+    # of at the end of an unattended overnight job. resolve_strategy also
+    # applies the C2 completeness gate, so an incomplete overlap stops here
+    # rather than certifying a `scale` factor further down.
+    #
+    # This walks the overlap window a second time (the full-range walk below
+    # covers it too). That is duplicated I/O, not a correctness risk: both go
+    # through congress_cache.iter_govinfo_days over the same files with the
+    # same count_term, so they cannot disagree unless the cache changes
+    # mid-run.
+    strategy, comparison = resolve_strategy(CONGRESS_RAW_GENTZKOW, CONGRESS_RAW_GOVINFO)
+    print(f"calibrate_splice.choose_strategy: {strategy}")
+    if strategy == "govinfo_only":
+        raise RuntimeError(
+            govinfo_only_message(
+                "build_congress_mentions",
+                "It means abandoning the 1990-2016 Gentzkow half, dropping "
+                "1990-1993 from the mentions build, and re-anchoring the Japan "
+                "beat to the 1994-2000 decline.",
+            )
+        )
+
     govinfo_counts, govinfo_skips = govinfo_counts_by_year(
         CONGRESS_RAW_GOVINFO, start_year, end_year
     )
@@ -223,27 +247,19 @@ def build() -> pd.DataFrame:
         for year, counts in govinfo_counts.items()
         if OVERLAP_START_YEAR <= year <= OVERLAP_END_YEAR
     }
-    # C2: assert the overlap is deep enough BEFORE deriving a verdict from it.
-    # build() is runnable standalone, so it cannot rely on calibrate_splice's
-    # own main() having gated first. A uniformly partial cache yields cv 0.0000
-    # here just as it does there, and this is the call site that actually
-    # rewrites the numbers.
-    require_complete_overlap(CONGRESS_RAW_GENTZKOW, CONGRESS_RAW_GOVINFO)
-
-    comparison = compare_overlap(overlap_gentzkow, overlap_govinfo)
-    strategy = choose_strategy(comparison)
-    print(f"calibrate_splice.choose_strategy: {strategy}")
-
-    if strategy == "govinfo_only":
+    # The verdict was resolved up front from calibrate_splice's own walk of the
+    # overlap. Confirm it matches the overlap sub-series of THIS build's walk,
+    # so the factor being applied below cannot describe a different corpus from
+    # the one being written. They go through the same walker over the same
+    # files, so a mismatch means the cache changed underneath the run.
+    own_view = compare_overlap(overlap_gentzkow, overlap_govinfo)
+    if choose_strategy(own_view) != strategy:
         raise RuntimeError(
-            "calibrate_splice.choose_strategy returned 'govinfo_only': the "
-            "Gentzkow and GovInfo china series diverge unstably over "
-            f"{OVERLAP_START_YEAR}-{OVERLAP_END_YEAR}. Per calibrate_splice's "
-            "own module docstring, this means abandoning the 1990-2016 "
-            "Gentzkow half, dropping 1990-1993 from the mentions build, and "
-            "re-anchoring the Japan beat to the 1994-2000 decline. That is a "
-            "decision for Heagen, not something build() will apply silently. "
-            "STOP and resolve this before re-running the build."
+            f"splice verdict disagrees with this build's own overlap counts: "
+            f"calibrate_splice said {strategy!r}, this walk says "
+            f"{choose_strategy(own_view)!r}. Both read the same cache through "
+            "the same walker, so this means the raw cache changed while the "
+            "build was running. Re-run against a quiescent cache."
         )
 
     scale_factor = comparison["mean_ratio"] if strategy == "scale" else None
