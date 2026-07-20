@@ -4,6 +4,7 @@ import pytest
 
 from build_congress_companions import build_companions_frame
 from build_congress_mentions import build_mentions_frame
+from build_congress_senators import build_senators_frame
 
 
 def _counts() -> dict[int, dict[str, int]]:
@@ -76,3 +77,34 @@ def test_era_with_too_few_distinct_words_raises():
     segments["1990s"] = ["China trade"]
     with pytest.raises(ValueError, match="1990s"):
         build_companions_frame(segments)
+
+
+def test_senate_average_is_the_mean_of_that_year():
+    counts = {("A001", 2020): 10, ("A002", 2020): 20, ("A001", 2021): 30}
+    names = {"A001": "Alice Adams", "A002": "Bob Brown"}
+    df = build_senators_frame(counts, names)
+    avg2020 = df[(df.senator == "Senate average") & (df.year == 2020)].mentions.iloc[0]
+    avg2021 = df[(df.senator == "Senate average") & (df.year == 2021)].mentions.iloc[0]
+    assert avg2020 == 15
+    assert avg2021 == 30
+
+
+def test_file_stays_ragged():
+    # Beat 3 teaches "Josh Hawley only enters in 2019". No zero-fill.
+    counts = {("A001", 2020): 10, ("A002", 2022): 5}
+    names = {"A001": "Alice Adams", "A002": "Bob Brown"}
+    df = build_senators_frame(counts, names)
+    bob = df[df.senator == "Bob Brown"]
+    assert list(bob.year) == [2022]
+
+
+def test_rows_are_year_sorted_per_senator():
+    counts = {("A001", 2022): 1, ("A001", 2020): 2, ("A001", 2021): 3}
+    df = build_senators_frame(counts, {"A001": "Alice Adams"})
+    alice = df[df.senator == "Alice Adams"]
+    assert list(alice.year) == [2020, 2021, 2022]
+
+
+def test_unknown_bioguide_raises():
+    with pytest.raises(KeyError):
+        build_senators_frame({("ZZZZ", 2020): 1}, {"A001": "Alice Adams"})
