@@ -1,8 +1,8 @@
 """Shared helpers for the TWL intern-notebook data pipeline.
 
-Imported by fetch_*, build_*, and validate_data. Deliberately pandas-only
-(no `requests`) so the offline modules (build_*, validate_data) never pull
-the network stage's dependency in transitively.
+Imported by fetch_*, build_*, validate_data, and print_anchors. Deliberately
+pandas-only (no `requests`) so the offline modules (build_*, validate_data)
+never pull the network stage's dependency in transitively.
 """
 from __future__ import annotations
 
