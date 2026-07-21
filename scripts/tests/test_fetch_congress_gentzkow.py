@@ -450,3 +450,35 @@ def test_main_returns_zero_on_successful_extraction(
     rc = fetch_congress_gentzkow.main()
     assert rc == 0
     assert (tmp_path / "speeches_senate_101.jsonl").exists()
+
+
+def test_a_speech_larger_than_csvs_default_field_limit_parses(tmp_path):
+    """csv caps a field at 128 KB by default; real Senate speeches exceed it.
+
+    Found by running against the actual archive for the first time: congress
+    114 raised `_csv.Error: field larger than field limit (131072)` on the very
+    first read, and its longest speech is 162,948 characters. Long floor
+    speeches and inserted documents (bill text, letters, hearing transcripts)
+    routinely run past the cap.
+
+    This survived every earlier test because nothing before it had opened the
+    11.4 GB archive -- the layout was documented, never inspected. The failure
+    is loud rather than silent, but it would have arrived only after the
+    multi-hour GovInfo pull.
+    """
+    import io
+
+    from fetch_congress_gentzkow import REQUIRED_SPEECHES_COLUMNS, read_pipe_table
+
+    huge = "china trade " * 20_000  # ~240 KB, well past csv's 131,072 default
+    assert len(huge) > 131_072, "fixture no longer exercises the limit"
+
+    header = "|".join(REQUIRED_SPEECHES_COLUMNS)
+    idx = list(REQUIRED_SPEECHES_COLUMNS)
+    row = ["x"] * len(idx)
+    row[idx.index("speech")] = huge
+    payload = (header + "\n" + "|".join(row) + "\n").encode("utf-8")
+
+    rows = read_pipe_table(io.BytesIO(payload), REQUIRED_SPEECHES_COLUMNS, "test")
+    assert len(rows) == 1
+    assert len(rows[0]["speech"]) == len(huge)
