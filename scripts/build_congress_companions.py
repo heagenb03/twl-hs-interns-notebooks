@@ -1,55 +1,48 @@
 # scripts/build_congress_companions.py
-"""Pure transform: raw corpus caches -> data/congress_companions.csv.
+"""Pure transform: raw corpus cache -> data/congress_companions.csv.
 
 Co-occurrence definition (documented in PROVENANCE.md): the window is ONE
 SPEECH SEGMENT -- a single senator's single turn. If a segment mentions China
 at all, every non-stopword in it is a companion. Repeats count, so the ranking
 is by frequency.
 
-The two corpora reach that definition differently, and they must agree or the
-window changes at the splice year. Gentzkow ships one speech per record
-already. GovInfo ships whole granules, which are multi-speaker sections -- the
+GovInfo ships whole granules, which are multi-speaker sections -- the
 committed 2021 fixture is 19 turns across 10 senators -- so each granule is
-split into turns here before any counting. See _granule_segments.
+split into turns here before any counting. See _granule_segments. That
+splitting is unrelated to the splice question below; it exists regardless of
+how many raw sources feed this build.
 
-Two raw caches feed this build, the same two build_congress_mentions.py uses:
-  - GovInfo CREC granules, 1994-2024: data/_raw/congress_govinfo/{year}/{pkg}.json
-  - Gentzkow-Shapiro-Taddy Senate speeches, ~1990-2016:
-    data/_raw/congress_gentzkow/speeches_senate_{congress}.jsonl
+One raw cache feeds this build: GovInfo CREC granules,
+data/_raw/congress_govinfo/{year}/{pkg}.json.
 
-They overlap 1994-2016. Unlike build_congress_mentions.py, this module does not
-need calibrate_splice's ratio/stability verdict -- there is no per-year count
-being scaled across the join. But it still must not let a real speech get
-tokenized twice from both caches during the overlap, since that would inflate
-some companion words' counts for no reason tied to what was actually said.
-So build() partitions the overlap exactly the way build_congress_mentions.py's
-build() does regardless of splice strategy: Gentzkow supplies every year up to
-and including calibrate_splice.OVERLAP_END_YEAR (2016), GovInfo supplies every
-year after it. Each source is walked only across the years it is responsible
-for, so no segment is ever counted from both caches.
+This used to splice a second source (Gentzkow-Shapiro-Taddy Senate speeches,
+1990-2016) in over their 1994-2016 overlap. calibrate_splice's own walk of
+that overlap returned `govinfo_only` on 2026-07-21 -- GovInfo counts a
+consistent ~2x Gentzkow because the Congressional Record interleaves
+verbatim legislative text with floor speech inside the same granule, and
+Gentzkow extracts only the spoken portions. The splice was abandoned rather
+than scaled; see twl_common.GOVINFO_ERA_START. The series now covers
+GOVINFO_ERA_START-2024 from GovInfo alone, and this module never reads the
+Gentzkow cache. The GovInfo coverage gate in build() is unrelated to that
+decision and stays: an interrupted GovInfo pull still produces
+validator-clean, plausible-looking, wrong output.
 """
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
 import pandas as pd
 
-from calibrate_splice import (
-    CALIBRATION_YEARS,
-    OVERLAP_END_YEAR,
-    govinfo_only_message,
-    resolve_strategy,
-)
-from congress_cache import govinfo_years_usable, iter_govinfo_days
+from congress_cache import govinfo_range_usable, iter_govinfo_days
 from congress_speakers import SPEAKER_RE, split_turns
 from congress_tokenize import count_term, top_companions
 from twl_common import (
     CONGRESS_ERAS,
-    CONGRESS_RAW_GENTZKOW,
     CONGRESS_RAW_GOVINFO,
+    CongressDataRefusalError,
     DATA_DIR,
+    GOVINFO_ERA_START,
     MENTIONS_YEARS,
 )
 
@@ -76,22 +69,24 @@ def build_companions_frame(segments_by_era: dict[str, list[str]]) -> pd.DataFram
 def _era_for_year(year: int) -> str | None:
     """Map a calendar year to one of CONGRESS_ERAS, or None if it fits none.
 
-    Standard decade boundaries: 1990s is 1990-1999, 2000s is 2000-2009, 2010s
-    is 2010-2019, 2020s is 2020-2029. MENTIONS_YEARS (1990-2024) falls
-    entirely inside this span, so None only fires for data outside the
-    notebook's known range (e.g. a stray pre-1990 or post-2029 record) --
-    that must be reported as a skip, never silently folded into the nearest
-    era, since an off-by-one at a decade boundary is exactly what would move
-    vocabulary between eras and undermine Beat 2's shift claim.
+    Derived from CONGRESS_ERAS itself (each entry is a decade label like
+    "2010s", covering that decade's ten years) rather than hardcoded decade
+    branches, so this can never decouple from CONGRESS_ERAS the way it did
+    before Task 3a: CONGRESS_ERAS narrowed to ("2010s", "2020s") but this
+    function still had 1990s/2000s branches, so a 1990s/2000s year returned a
+    era string _empty_era_segments() had no key for -- a KeyError instead of
+    the intended skip.
+
+    None fires for any year outside the configured eras (e.g. a stray
+    pre-2010 or post-2029 record) -- that must be reported as a skip, never
+    silently folded into the nearest era, since an off-by-one at a decade
+    boundary is exactly what would move vocabulary between eras and undermine
+    Beat 2's shift claim.
     """
-    if 1990 <= year <= 1999:
-        return "1990s"
-    if 2000 <= year <= 2009:
-        return "2000s"
-    if 2010 <= year <= 2019:
-        return "2010s"
-    if 2020 <= year <= 2029:
-        return "2020s"
+    for era in CONGRESS_ERAS:
+        decade_start = int(era[:-1])
+        if decade_start <= year <= decade_start + 9:
+            return era
     return None
 
 
@@ -111,9 +106,12 @@ def _granule_segments(text: str, skips: dict[str, int]) -> list[str]:
     nays, colleagues, cantwell. Per turn, the same granule gives all, america,
     competition, states, research, plant, semiconductors, supply.
 
-    That matters because the Gentzkow half already uses one speech per segment,
-    so the window silently CHANGED DEFINITION at 2017 -- the splice year -- and
-    the split lands inside the 2010s era.
+    That mattered doubly back when this build also read a Gentzkow half that
+    used one speech per segment: without this split, the window would have
+    silently CHANGED DEFINITION at 2017, the old splice year, landing the
+    split inside the 2010s era. The splice itself is gone (see the module
+    docstring), but the underlying problem is not -- a GovInfo granule is
+    still a multi-speaker section, so the split stays required on its own.
 
     Splitting is done here, at the segment layer, with the existing
     regression-covered congress_speakers.split_turns. It is deliberately NOT
@@ -197,147 +195,79 @@ def govinfo_segments_by_era(
     return segments, skips
 
 
-def gentzkow_segments_by_era(
-    raw_dir: Path, start_year: int, end_year: int
-) -> tuple[dict[str, list[str]], dict[str, int]]:
-    """Bucket every china-bearing Senate speech text into its era, by year.
-
-    Reads data/_raw/congress_gentzkow/speeches_senate_{congress}.jsonl, one
-    record per line. Each record's `date` field (YYYYMMDD) determines its
-    year rather than the congress number in the filename, since a single
-    Congress can span two calendar years. Only Senate rows ever reach this
-    cache (fetch_congress_gentzkow.py filters chamber == 'S' at fetch time),
-    so no chamber filter is needed here.
-
-    Returns (segments_by_era, skip_counts). skip_counts tracks, by reason,
-    every line this function declined to use: 'bad_json' (line failed to
-    parse), 'bad_date' (missing/malformed date field), 'out_of_range' (date
-    outside [start_year, end_year]), 'year_outside_known_eras' (a year inside
-    range but mapping to no CONGRESS_ERAS bucket), 'no_china_mention' (speech
-    text that never mentions china).
-    """
-    segments = _empty_era_segments()
-    skips = {
-        "bad_json": 0,
-        "bad_date": 0,
-        "out_of_range": 0,
-        "year_outside_known_eras": 0,
-        "no_china_mention": 0,
-    }
-    for path in sorted(raw_dir.glob("speeches_senate_*.jsonl")):
-        with path.open(encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    record = json.loads(line)
-                except json.JSONDecodeError:
-                    skips["bad_json"] += 1
-                    continue
-                date = record.get("date", "")
-                if len(date) < 4 or not date[:4].isdigit():
-                    skips["bad_date"] += 1
-                    continue
-                year = int(date[:4])
-                if year < start_year or year > end_year:
-                    skips["out_of_range"] += 1
-                    continue
-                era = _era_for_year(year)
-                if era is None:
-                    skips["year_outside_known_eras"] += 1
-                    continue
-                text = record.get("text", "")
-                if not count_term(text, "china"):
-                    skips["no_china_mention"] += 1
-                    continue
-                segments[era].append(text)
-    return segments, skips
-
-
 def build() -> pd.DataFrame:
-    """Walk both raw caches, bucket china-bearing segments by era, and write OUT_PATH.
+    """Walk the GovInfo cache, bucket china-bearing segments by era, and write OUT_PATH.
 
-    The Gentzkow/GovInfo overlap (1994-2016) is partitioned the same way
-    build_congress_mentions.build() partitions it: Gentzkow supplies every
-    year through calibrate_splice.OVERLAP_END_YEAR (2016), GovInfo supplies
-    every year after. Each source is only walked across its own range, so no
-    segment is ever tokenized from both caches.
+    No splice: see module docstring. Two gates guard this, and they are not the
+    same gate. Both raise CongressDataRefusalError -- one domain exception for
+    "this build must not run against this data" -- rather than two different
+    refusal idioms:
 
-    Every skipped day/granule/speech is counted by reason and printed, per
+      * The floor guard below is static -- it checks MENTIONS_YEARS itself,
+        not the cache. It exists so that if MENTIONS_YEARS is ever widened
+        back below GOVINFO_ERA_START, this fails loudly instead of silently
+        building a truncated or empty series for the pre-coverage years.
+      * The coverage gate (govinfo_range_usable) is the one that survives
+        from before the splice was dropped: an interrupted GovInfo pull is
+        still the likeliest failure, and it still produces validator-clean,
+        plausible-looking, wrong output -- the exact failure this project
+        keeps naming. It has to live here in build(), not only in main(), so
+        that calling build() directly never bypasses it. main() below catches
+        CongressDataRefusalError and turns it into a return code, so its own
+        contract (return 1, never propagate) matches build_congress_mentions
+        and test_build_cache_gates.py's expectations.
+
+    Every skipped day/granule/segment is counted by reason and printed, per
     this project's rule that dropped data must be reported, never silently
     discarded.
     """
     start_year, end_year = min(MENTIONS_YEARS), max(MENTIONS_YEARS)
 
-    # I1: the splice verdict gates this build too.
-    #
-    # Task 9's docstring claimed the year-split "does not require invoking
-    # calibrate_splice since that split is identical under every splice
-    # outcome". True for `concatenate` and `scale`; FALSE for `govinfo_only`.
-    # Under that verdict build_congress_mentions produces nothing, while this
-    # build would run to completion over the very Gentzkow years the mentions
-    # build just declared untrustworthy -- shipping two of three CSVs built on
-    # data the third refused to use.
-    #
-    # The SCALE factor is deliberately NOT applied here (Heagen, 2026-07-20).
-    # A uniform factor cannot reorder a top-ten, so scaling is a no-op in every
-    # single-source era -- including 1990s and 2020s, which is the notebook's
-    # default comparison. It would only touch the straddling 2010s era, and
-    # there it is actively harmful: rounding a scaled count with k < 1 collapses
-    # small counts to zero and breaks the ten-word requirement.
-    strategy, _ = resolve_strategy(CONGRESS_RAW_GENTZKOW, CONGRESS_RAW_GOVINFO)
-    print(f"calibrate_splice.choose_strategy: {strategy}")
-    if strategy == "govinfo_only":
-        raise RuntimeError(
-            govinfo_only_message(
-                "build_congress_companions",
-                "That makes the 1990s and 2000s eras -- both drawn entirely "
-                "from Gentzkow -- untrustworthy for Beat 2's vocabulary-shift "
-                "claim, which compares 1990s against 2020s by default. "
-                "build_congress_mentions stops on this same verdict; "
-                "companions must not quietly ship instead.",
-            )
+    # No splice: the 1994-2016 overlap calibrated to `govinfo_only` on
+    # 2026-07-21, so the Gentzkow half is not read. See twl_common.
+    # GOVINFO_ERA_START. The COVERAGE gate below is unrelated to the splice
+    # and must stay: an interrupted GovInfo pull still yields validator-clean
+    # wrong output.
+    if start_year < GOVINFO_ERA_START:
+        raise CongressDataRefusalError(
+            f"MENTIONS_YEARS starts at {start_year}, before GovInfo coverage "
+            f"({GOVINFO_ERA_START}). Pre-{GOVINFO_ERA_START} years need a "
+            f"Gentzkow splice, which was abandoned. Restore the splice or "
+            f"raise the range floor -- do not let these years build empty."
         )
 
-    gentzkow_segments, gentzkow_skips = gentzkow_segments_by_era(
-        CONGRESS_RAW_GENTZKOW, start_year, OVERLAP_END_YEAR
-    )
-    govinfo_segments, govinfo_skips = govinfo_segments_by_era(
-        CONGRESS_RAW_GOVINFO, OVERLAP_END_YEAR + 1, end_year
+    usable, bad_years = govinfo_range_usable(CONGRESS_RAW_GOVINFO, start_year, end_year)
+    if not usable:
+        raise CongressDataRefusalError(
+            "Cannot build congress_companions.csv: GovInfo cache incomplete "
+            f"for {start_year}-{end_year}. Missing or short: {bad_years}\n"
+            f"    Cache: {CONGRESS_RAW_GOVINFO}\n"
+            "    Produce it with: python scripts/fetch_congress_govinfo.py "
+            f"--start-year {start_year} --end-year {end_year}"
+        )
+
+    segments_by_era, skips = govinfo_segments_by_era(
+        CONGRESS_RAW_GOVINFO, start_year, end_year
     )
 
     print(
-        "Gentzkow cache skipped: "
-        f"{gentzkow_skips['bad_json']} bad JSON line(s), "
-        f"{gentzkow_skips['bad_date']} bad/missing date(s), "
-        f"{gentzkow_skips['out_of_range']} record(s) outside "
-        f"{start_year}-{OVERLAP_END_YEAR}, "
-        f"{gentzkow_skips['year_outside_known_eras']} record(s) with a year "
-        "outside CONGRESS_ERAS, "
-        f"{gentzkow_skips['no_china_mention']} record(s) with no china mention"
-    )
-    print(
         "GovInfo cache skipped: "
-        f"{govinfo_skips['phantom_marker']} phantom marker(s), "
-        f"{govinfo_skips['bad_json']} bad JSON day(s), "
-        f"{govinfo_skips['granule_no_text']} granule(s) with no text, "
-        f"{govinfo_skips['year_outside_known_eras']} granule(s) with a year "
+        f"{skips['phantom_marker']} phantom marker(s), "
+        f"{skips['bad_json']} bad JSON day(s), "
+        f"{skips['granule_no_text']} granule(s) with no text, "
+        f"{skips['year_outside_known_eras']} granule(s) with a year "
         "outside CONGRESS_ERAS, "
-        f"{govinfo_skips['no_china_mention']} segment(s) with no china mention"
+        f"{skips['no_china_mention']} segment(s) with no china mention"
     )
     print(
         "GovInfo segmentation: "
-        f"{govinfo_skips['granule_without_speaker_headers']} granule(s) had no "
+        f"{skips['granule_without_speaker_headers']} granule(s) had no "
         "speaker headers and were used whole, "
-        f"{govinfo_skips['head_text_segments_dropped']} pre-header head "
+        f"{skips['head_text_segments_dropped']} pre-header head "
         "block(s) dropped carrying "
-        f"{govinfo_skips['head_text_china_dropped']} china mention(s)"
+        f"{skips['head_text_china_dropped']} china mention(s)"
     )
 
-    segments_by_era = {
-        era: gentzkow_segments[era] + govinfo_segments[era] for era in CONGRESS_ERAS
-    }
     for era in CONGRESS_ERAS:
         print(f"era '{era}': {len(segments_by_era[era])} china-bearing segment(s)")
 
@@ -349,45 +279,17 @@ def build() -> pd.DataFrame:
 
 
 def main() -> int:
-    missing = []
-    if not CONGRESS_RAW_GENTZKOW.exists() or not any(
-        CONGRESS_RAW_GENTZKOW.glob("speeches_senate_*.jsonl")
-    ):
-        missing.append(
-            f"  - Gentzkow cache missing or empty: {CONGRESS_RAW_GENTZKOW}\n"
-            "    Produce it with: python scripts/fetch_congress_gentzkow.py"
-        )
-    govinfo_start, mentions_end = OVERLAP_END_YEAR + 1, max(MENTIONS_YEARS)
-    # C1: presence is not completeness. The check this replaced returned True
-    # for a single leftover smoke-test day, after which build() completed,
-    # printed no error, and wrote a validator-clean 40-row CSV whose 2020s row
-    # -- Beat 2's entire 2020s teaching claim -- was derived from one day of
-    # Senate business: nato, state, all, one, richard, whereas, united, states,
-    # hezbollah, washington. build_congress_senators already used a per-year
-    # floor; it was never applied back here.
-    required = sorted(set(CALIBRATION_YEARS) | set(range(govinfo_start, mentions_end + 1)))
-    usable, bad_years = govinfo_years_usable(CONGRESS_RAW_GOVINFO, required)
-    if not usable:
-        missing.append(
-            f"  - GovInfo cache incomplete. Missing or short: {bad_years}\n"
-            f"    Required: {list(CALIBRATION_YEARS)} (splice calibration "
-            f"sample) plus {govinfo_start}-{mentions_end} (the data).\n"
-            f"    Cache: {CONGRESS_RAW_GOVINFO}\n"
-            "    Produce it with: python scripts/fetch_congress_govinfo.py "
-            f"--start-year 2010 --end-year {mentions_end}"
-        )
-    if missing:
-        print(
-            "Cannot build congress_companions.csv: required raw cache(s) are "
-            "absent.\n" + "\n".join(missing) + "\n\n"
-            "These are long-running downloads (the GovInfo pull is roughly "
-            "110k requests; the Gentzkow archive is 11.4 GB) and are not "
-            "run automatically. See the scripts above for what each one "
-            "produces and where."
-        )
+    # build() raises CongressDataRefusalError itself for both refusals (an
+    # incomplete GovInfo cache and a pre-coverage year range) -- so calling
+    # build() directly cannot bypass either gate; see its docstring. Caught
+    # and translated back into a return code here so main()'s own contract --
+    # return 1, never propagate -- matches build_congress_mentions.main() and
+    # test_build_cache_gates.py's expectations.
+    try:
+        build()
+    except CongressDataRefusalError as exc:
+        print(exc)
         return 1
-
-    build()
     return 0
 
 

@@ -100,13 +100,19 @@ def test_the_2020s_top_words_are_vocabulary_not_procedural_boilerplate(tmp_path)
 def test_a_lone_china_mention_no_longer_donates_the_whole_granule(tmp_path):
     """The 1999 aviation granule mentions china ONCE in 36k characters. Under a
     whole-granule window that single mention donated every word in the section
-    -- airports, extensions, the presiding officer -- to the 1990s era."""
+    -- airports, extensions, the presiding officer -- to whatever era it landed
+    in. The granule's real recorded date is 1999, but CONGRESS_ERAS no longer
+    has a 1990s bucket (see twl_common.CONGRESS_ERAS), so this cache is written
+    under 2015 -- inside the surviving 2010s era -- purely to give
+    govinfo_segments_by_era a bucket to write into. Only the era label moved;
+    the fixture content (a real granule with exactly one china mention buried
+    in 36k characters) and the property under test are unchanged."""
     text = _granule_text("CREC-1999-03-17-pt1-PgS2821-2.htm")
     assert count_term(text, "china") == 1, "fixture changed"
 
-    _cache_with(tmp_path, 1999, [text])
-    segments, _ = govinfo_segments_by_era(tmp_path, 1999, 1999)
-    donated = sum(len(s) for s in segments["1990s"])
+    _cache_with(tmp_path, 2015, [text])
+    segments, _ = govinfo_segments_by_era(tmp_path, 2015, 2015)
+    donated = sum(len(s) for s in segments["2010s"])
     assert donated < len(text) / 10
 
 

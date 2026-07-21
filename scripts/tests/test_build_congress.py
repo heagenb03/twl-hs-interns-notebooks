@@ -53,9 +53,11 @@ FILLER = ["alpha", "bravo", "charlie", "delta", "echo",
 
 
 def _segments() -> dict[str, list[str]]:
+    # CONGRESS_ERAS narrowed to ("2010s", "2020s") -- see twl_common.CONGRESS_ERAS
+    # and GOVINFO_ERA_START -- after the 1994-2016 Gentzkow overlap calibrated
+    # to `govinfo_only` on 2026-07-21 and the splice was abandoned. Only these
+    # two eras are ever built now.
     return {
-        "1990s": [f"China trade {w} " * (12 - i) for i, w in enumerate(FILLER)],
-        "2000s": [f"China currency {w} " * (12 - i) for i, w in enumerate(FILLER)],
         "2010s": [f"China cyber {w} " * (12 - i) for i, w in enumerate(FILLER)],
         "2020s": [f"China semiconductors {w} " * (12 - i) for i, w in enumerate(FILLER)],
     }
@@ -64,7 +66,7 @@ def _segments() -> dict[str, list[str]]:
 def test_exactly_ten_words_per_era():
     df = build_companions_frame(_segments())
     assert list(df.columns) == ["era", "word", "count"]
-    for era in ("1990s", "2000s", "2010s", "2020s"):
+    for era in ("2010s", "2020s"):
         assert (df.era == era).sum() == 10
 
 
@@ -76,14 +78,17 @@ def test_china_is_never_its_own_companion():
 def test_words_may_repeat_across_eras():
     # Unlike the synthetic file, real data will repeat 'trade' and 'taiwan'.
     # Beat 2 compares top-threes and still works with overlap.
+    # Literal, not len(CONGRESS_ERAS) * 10 -- deriving it from the same eras
+    # the fixture is built from would make this pass trivially regardless of
+    # how many rows build_companions_frame actually emits per era.
     df = build_companions_frame(_segments())
-    assert len(df) == 40
+    assert len(df) == 20
 
 
 def test_era_with_too_few_distinct_words_raises():
     segments = _segments()
-    segments["1990s"] = ["China trade"]
-    with pytest.raises(ValueError, match="1990s"):
+    segments["2010s"] = ["China trade"]
+    with pytest.raises(ValueError, match="2010s"):
         build_companions_frame(segments)
 
 
