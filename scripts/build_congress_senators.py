@@ -8,11 +8,26 @@ file would throw away work the "Senate average" needs anyway.
 The file is intentionally RAGGED - no rows before a senator takes office. Beat 3
 teaches that directly.
 
-Two raw caches feed build(), the same split point build_congress_mentions.py and
-build_congress_companions.py both use: Gentzkow supplies every year through
-calibrate_splice.OVERLAP_END_YEAR (2016), GovInfo supplies every year after it.
-That boundary is matched here on purpose, so all three CSVs describe the same
-years from the same sources.
+One raw cache feeds build() now: GovInfo CREC granules,
+data/_raw/congress_govinfo/{year}/{pkg}.json, across the whole of
+SENATOR_YEARS (2010-2024).
+
+This used to also read a Gentzkow-Shapiro-Taddy Senate-speeches cache for
+2010-2016, splicing it against GovInfo's 2017-2024 half at the same boundary
+build_congress_mentions.py and build_congress_companions.py used. calibrate_
+splice's own walk of the 1994-2016 overlap returned `govinfo_only` on
+2026-07-21 -- GovInfo counts a consistent ~2x Gentzkow because the
+Congressional Record interleaves verbatim legislative text with floor speech
+inside the same granule, and Gentzkow extracts only the spoken portions. The
+splice was abandoned rather than scaled; see twl_common.GOVINFO_ERA_START.
+Because SENATOR_YEARS already starts at GOVINFO_ERA_START (2010), the whole
+series -- not just a widened prefix, as for mentions/companions -- now comes
+from GovInfo alone, and this module never reads the Gentzkow cache at all: the
+Gentzkow name -> bioguide reconciliation, `match_gentzkow_speaker`, and the
+2010-2016 Gentzkow counting half described lower in this docstring no longer
+exist. The GovInfo coverage gate in build() is unrelated to that decision and
+stays: an interrupted GovInfo pull still produces validator-clean,
+plausible-looking, wrong output.
 
 R1 -- carry_in is None ("dropped head text") policy
 ----------------------------------------------------
@@ -80,34 +95,6 @@ candidate's own `state` field. It does not change any attribution -- it only
 counts and reports, converting an unanswerable question into a number the
 first real run will produce.
 
-Gentzkow name -> bioguide reconciliation (2010-2016)
--------------------------------------------------------
-The Gentzkow cache carries no bioguide id, only `lastname`/`firstname`/
-`state`. GovInfo's own MODS metadata is the one place in this project that
-has both a name and a bioguide id for the same person, so
-`govinfo_bioguide_roster` harvests a name -> bioguide bridge from GovInfo's
-`congMember` lists ACROSS THE FULL CACHED RANGE (not just 2017+) -- reading
-only the `members` field, never `text`, so this can never double-count a
-china mention. Matching then follows the exact same no-guessing rule
-`_resolve_speaker` uses for headers: a surname naming exactly one candidate
-resolves outright; a surname shared by more than one candidate resolves only
-when the Gentzkow record's `state` field disambiguates to exactly one match;
-anything else is counted as unmatched and skipped, never guessed.
-
-This reconciliation carries two irreducible risks, both counted rather than
-hidden:
-  1. fetch_congress_gentzkow.py's own docstring says the archive's exact
-     column layout, including this `state` field's format, is UNVERIFIED --
-     nobody who wrote this project has opened hein-daily.zip. Matching
-     handles the two plausible formats (a bare 2-letter code or a full state
-     name) and treats anything else as "no state information" rather than
-     guessing at a third format.
-  2. This bridge only knows about senators whose GovInfo congMember entries
-     are present in the cache. A senator who served only in 2010-2016 and
-     whose GovInfo years are not yet fetched will not be in the roster and
-     will be reported as unmatched, not silently dropped -- but also not
-     silently invented from partial information.
-
 Display-name risk (flagged, not fixed here)
 --------------------------------------------
 `_display_name` turns MODS authority-lnf ("Schumer, Charles E.") into
@@ -137,11 +124,11 @@ China less often than the (already inflated) non-zero mean. The old
 validator could never catch this because it recomputes the same mean from
 the same rows -- build and validator shared one wrong definition.
 
-Fix: `govinfo_bioguide_roster` now also returns `serving_by_year`, a
+Fix: `govinfo_bioguide_roster` also returns `serving_by_year`, a
 year -> {bioguide ids} map built from the exact same congMember walk that
-already produces the name/bioguide roster (see that function's docstring for
-precisely what "serving" means here and what it misses). `build()` passes
-that map into `build_senators_frame` as `serving`; for every (bio, year)
+already produces the bioguide -> display-name map (see that function's
+docstring for precisely what "serving" means here and what it misses).
+`build()` passes that map into `build_senators_frame` as `serving`; for every (bio, year)
 pair where `bio` is in `serving[year]` but has no entry in `counts`,
 `build_senators_frame` adds a mentions=0 row BEFORE computing the sentinel
 average, so the average is the mean over every senator this build can prove
@@ -157,18 +144,21 @@ every version of it. `serving_by_year` requires GovInfo congMember metadata
 across the FULL 2010-2024 span (see I6 below), so this fix is only as good
 as that coverage.
 
-I6 -- main()'s gate must cover the FULL SENATOR_YEARS span, not just 2017+
+I6 -- the coverage gate must cover the FULL SENATOR_YEARS span, not just 2017+
 -----------------------------------------------------------------------------
 `govinfo_bioguide_roster` -- and now `serving_by_year` -- reads GovInfo
 congMember metadata across all of SENATOR_YEARS (2010-2024), not just the
-post-splice years GovInfo alone supplies china counts for. The old main()
-gate only validated 2017-2024 coverage, so a 2017+-only cache passed the
-gate while every 2010-2016 senator's roster/serving entry was silently
-absent (that senator then resolves via Gentzkow's own name matching, or not
-at all, but either way the "serving that year" signal for 2010-2016 was
-missing without the gate ever saying so). main() now calls
+post-splice years GovInfo alone used to supply china counts for. The old gate
+only validated 2017-2024 coverage, so a 2017+-only cache passed the gate
+while every 2010-2016 senator's roster/serving entry was silently absent.
+That was already a real gap before Task 3b, and it matters even more now:
+since the splice is gone and GovInfo alone supplies EVERY year (see the
+module docstring's top section), a 2017+-only cache would also silently
+produce a truncated CHINA-COUNT series for 2010-2016, not just a missing
+roster/serving entry. build()'s coverage gate calls
 `congress_cache.govinfo_range_usable` over `min(SENATOR_YEARS)` through
-`max(SENATOR_YEARS)`.
+`max(SENATOR_YEARS)` -- the same span the roster walk and the counting walk
+both need -- so one gate now protects both.
 
 I8 -- one cache walker, not four
 ------------------------------------
@@ -193,13 +183,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from calibrate_splice import (
-    OVERLAP_END_YEAR,
-    govinfo_only_message,
-    resolve_strategy,
-)
 from congress_cache import (
-    MIN_REAL_DAYS_PER_YEAR,
     govinfo_range_usable,
     iter_govinfo_days,
 )
@@ -214,9 +198,10 @@ from congress_speakers import (
 )
 from congress_tokenize import count_term
 from twl_common import (
-    CONGRESS_RAW_GENTZKOW,
     CONGRESS_RAW_GOVINFO,
+    CongressDataRefusalError,
     DATA_DIR,
+    GOVINFO_ERA_START,
     SENATOR_YEARS,
 )
 
@@ -314,23 +299,6 @@ def _display_name(lnf: str) -> str:
     return f"{first.strip()} {last.strip()}".strip()
 
 
-def _normalize_state_token(raw: str) -> str | None:
-    """Best-effort normalize a Gentzkow 'state' field to a 2-letter code.
-
-    fetch_congress_gentzkow.py's own docstring says the archive's exact
-    layout, including this field's format, is UNVERIFIED. Handles the two
-    plausible formats (a bare 2-letter code, or a full state name) and
-    returns None for anything else -- callers must treat None as "no usable
-    state information", not guess at a third format.
-    """
-    raw = (raw or "").strip()
-    if not raw:
-        return None
-    if len(raw) == 2 and raw.upper() in _STATE_CODES.values():
-        return raw.upper()
-    return _STATE_CODES.get(raw.title())
-
-
 def _state_qualifier_contradictions(text: str, members: list[dict]) -> list[str]:
     """R2: flag turns whose 'of <State>' qualifier disagrees with the sole
     same-surname SPEAKING member's own state field.
@@ -375,29 +343,28 @@ def _state_qualifier_contradictions(text: str, members: list[dict]) -> list[str]
 
 def govinfo_bioguide_roster(
     raw_dir: Path, start_year: int, end_year: int
-) -> tuple[
-    dict[str, list[dict[str, str]]], dict[str, str], dict[int, set[str]], dict[str, int]
-]:
-    """Harvest a name -> bioguide bridge, and a serving-by-year proxy, from
+) -> tuple[dict[str, str], dict[int, set[str]], dict[str, int]]:
+    """Harvest a bioguide -> display-name map and a serving-by-year proxy from
     GovInfo congMember metadata.
 
     Reads ONLY each granule's `members` list, never `text`, so this can never
     contribute to (or double-count) a china mention -- it exists purely to
-    give the Gentzkow half a way to resolve names to bioguide ids, and (I2)
-    to give build_senators_frame a serving population for the "Senate
-    average" denominator. Walks the shared congress_cache.iter_govinfo_days
-    walker over the full [start_year, end_year] span (not just the
-    post-splice years), since a senator who left office before the splice
-    would otherwise never appear in any roster GovInfo could supply, and I6
-    requires main() to guarantee that full span is actually cached.
+    resolve display names for build_senators_frame, and (I2) to give it a
+    serving population for the "Senate average" denominator. Walks the shared
+    congress_cache.iter_govinfo_days walker over the full [start_year,
+    end_year] span, since the GovInfo coverage gate (I6) is what guarantees
+    that full span is actually cached.
 
-    Returns (roster, bio_to_lnf, serving_by_year, skips).
-      * `roster` maps normalize_lnf(lnf) -> a deduplicated list of
-        {'bio', 'state', 'lnf'} for every SPEAKING member ever seen under
-        that surname key.
+    This used to also build a surname -> bioguide-candidates roster, so that
+    Gentzkow's name-only speech records could be resolved to a bioguide id
+    (see match_gentzkow_speaker, removed in Task 3b along with the Gentzkow
+    half of this build -- see the module docstring). Every senator now comes
+    from GovInfo's own congMember metadata, which already carries a bioguide
+    id directly, so that surname bridge has nothing left to resolve.
+
+    Returns (bio_to_lnf, serving_by_year, skips).
       * `bio_to_lnf` maps every bioguide id seen to its most recently
-        observed lnf string, for display-name lookup shared by both halves
-        of build().
+        observed lnf string, for display-name lookup.
       * `serving_by_year` maps every year in [start_year, end_year] -> the
         set of bioguide ids proxied as "serving that year" by appearing as a
         role=SPEAKING congMember on at least one CACHED day within it. THIS
@@ -405,11 +372,11 @@ def govinfo_bioguide_roster(
           - it can only ever UNDER-count: a senator who served the entire
             year but whose speaking days were never captured by the cache
             (a gap day, a phantom-marked day, a manifest-complete year that
-            is still missing this one senator's specific days) is silently
-            absent from the set for that year, and build_senators_frame will
-            not give them a zero row -- the same silent narrowing the
-            original I2 bug caused, just scoped to one senator-year instead
-            of every never-speaking senator.
+            is still missing this one senator's specific days) is still
+            silently absent from the set for that year, and
+            build_senators_frame will not give them a zero row -- the same
+            silent narrowing the original I2 bug caused, just scoped to one
+            senator-year instead of every never-speaking senator.
           - it can never OVER-count: nobody is added without a real granule
             in the cache naming them as a SPEAKING member on a day within
             that year.
@@ -424,7 +391,6 @@ def govinfo_bioguide_roster(
         other cache walk in this project instead of being silently dropped
         (see the I8 section of the module docstring).
     """
-    by_surname: dict[str, dict[str, dict[str, str]]] = {}
     bio_to_lnf: dict[str, str] = {}
     serving_by_year: dict[int, set[str]] = {
         year: set() for year in range(start_year, end_year + 1)
@@ -439,43 +405,9 @@ def govinfo_bioguide_roster(
                 if not lnf:
                     continue
                 bio = member["bio"]
-                surname = normalize_lnf(lnf)
-                by_surname.setdefault(surname, {})[bio] = {
-                    "bio": bio,
-                    "state": (member.get("state") or "").upper(),
-                    "lnf": lnf,
-                }
                 bio_to_lnf[bio] = lnf
                 serving_by_year[day.year].add(bio)
-    roster = {surname: list(bios.values()) for surname, bios in by_surname.items()}
-    return roster, bio_to_lnf, serving_by_year, skips
-
-
-def match_gentzkow_speaker(
-    lastname: str, state: str, roster: dict[str, list[dict[str, str]]]
-) -> tuple[str | None, str]:
-    """Resolve one Gentzkow record's (lastname, state) to a bioguide id.
-
-    Returns (bio_or_None, reason). reason is one of 'matched',
-    'unknown_surname', 'ambiguous_surname_no_state',
-    'ambiguous_surname_unresolved_state'. Never guesses: a surname shared by
-    more than one roster candidate resolves only when the (best-effort
-    normalized) state field disambiguates it to exactly one -- mirroring
-    congress_speakers._resolve_speaker's own same-surname policy.
-    """
-    surname = _fold(lastname).upper().strip()
-    candidates = roster.get(surname, [])
-    if not candidates:
-        return None, "unknown_surname"
-    if len(candidates) == 1:
-        return candidates[0]["bio"], "matched"
-    code = _normalize_state_token(state)
-    if code is None:
-        return None, "ambiguous_surname_no_state"
-    matches = [c for c in candidates if c["state"] == code]
-    if len(matches) == 1:
-        return matches[0]["bio"], "matched"
-    return None, "ambiguous_surname_unresolved_state"
+    return bio_to_lnf, serving_by_year, skips
 
 
 def govinfo_senator_counts(
@@ -594,131 +526,66 @@ def govinfo_senator_counts(
     return counts, skips, contradiction_examples
 
 
-def gentzkow_senator_counts(
-    raw_dir: Path,
-    start_year: int,
-    end_year: int,
-    roster: dict[str, list[dict[str, str]]],
-) -> tuple[dict[tuple[str, int], int], dict[str, int]]:
-    """Sum china mentions per (bioguide, year) over Gentzkow Senate speeches.
-
-    Reads data/_raw/congress_gentzkow/speeches_senate_{congress}.jsonl. Each
-    record's `date` field (YYYYMMDD) determines its year rather than the
-    congress number in the filename. Every record is resolved to a bioguide
-    id via match_gentzkow_speaker (see module docstring for the
-    reconciliation policy and its risks); a record that cannot be resolved
-    is counted and skipped, never guessed.
-
-    Returns (counts, skips). skips tracks, by reason, every record this
-    function declined to count: 'bad_json', 'bad_date', 'out_of_range', plus
-    match_gentzkow_speaker's own failure reasons ('unknown_surname',
-    'ambiguous_surname_no_state', 'ambiguous_surname_unresolved_state').
-    """
-    counts: dict[tuple[str, int], int] = {}
-    skips = {
-        "bad_json": 0,
-        "bad_date": 0,
-        "out_of_range": 0,
-        "unknown_surname": 0,
-        "ambiguous_surname_no_state": 0,
-        "ambiguous_surname_unresolved_state": 0,
-    }
-    for path in sorted(raw_dir.glob("speeches_senate_*.jsonl")):
-        with path.open(encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    record = json.loads(line)
-                except json.JSONDecodeError:
-                    skips["bad_json"] += 1
-                    continue
-                date = record.get("date", "")
-                if len(date) < 4 or not date[:4].isdigit():
-                    skips["bad_date"] += 1
-                    continue
-                year = int(date[:4])
-                if year < start_year or year > end_year:
-                    skips["out_of_range"] += 1
-                    continue
-                n = count_term(record.get("text", ""), "china")
-                if not n:
-                    continue
-                bio, reason = match_gentzkow_speaker(
-                    record.get("lastname", ""), record.get("state", ""), roster
-                )
-                if bio is None:
-                    skips[reason] = skips.get(reason, 0) + 1
-                    continue
-                counts[(bio, year)] = counts.get((bio, year), 0) + n
-    return counts, skips
-
-
 def build() -> pd.DataFrame:
-    """Walk both raw caches, attribute china mentions per senator per year, and
-    write OUT_PATH.
+    """Walk the GovInfo cache, attribute china mentions per senator per year,
+    and write OUT_PATH. No splice: see module docstring.
 
-    The Gentzkow/GovInfo overlap is partitioned exactly the way
-    build_congress_mentions.py's and build_congress_companions.py's build()
-    functions partition it: Gentzkow supplies every year through
-    calibrate_splice.OVERLAP_END_YEAR (2016), GovInfo supplies every year
-    after it. See the module docstring for the R1 (carry_in-is-None) policy,
-    the R2 (state-qualifier contradiction) check, and the Gentzkow name ->
-    bioguide reconciliation and its risks.
+    See the module docstring for the R1 (carry_in-is-None) policy and the R2
+    (state-qualifier contradiction) check -- both are GovInfo attribution
+    mechanics, unrelated to the splice question, and both still apply exactly
+    as before.
 
-    Every skipped/dropped/unmatched item is counted by reason and printed,
-    per this project's rule that dropped data must be reported, never
-    silently discarded.
+    Two gates guard this, and they are not the same gate. Both raise
+    CongressDataRefusalError -- one domain exception for "this build must not
+    run against this data" -- rather than two different refusal idioms:
+
+      * The floor guard below is static -- it checks SENATOR_YEARS itself,
+        not the cache. It exists so that if SENATOR_YEARS is ever widened
+        back below GOVINFO_ERA_START, this fails loudly instead of silently
+        building a truncated or empty series for the pre-coverage years.
+      * The coverage gate (govinfo_range_usable) is the one that survives
+        from before the splice was dropped: an interrupted GovInfo pull is
+        still the likeliest failure, and it still produces validator-clean,
+        plausible-looking, wrong output -- the exact failure this project
+        keeps naming. It has to live here in build(), not only in main(), so
+        that calling build() directly never bypasses it. It also subsumes
+        the old I6 gate: since GovInfo alone now supplies every year (not
+        just the roster/serving signal), this single gate covers both the
+        counting walk and the roster walk over the same SENATOR_YEARS span.
+        main() below catches CongressDataRefusalError and turns it into a
+        return code, so its own contract (return 1, never propagate) matches
+        build_congress_mentions and test_build_cache_gates.py's expectations.
+
+    Every skipped/dropped item is counted by reason and printed, per this
+    project's rule that dropped data must be reported, never silently
+    discarded.
     """
-    # I1: this build answers to the same splice verdict as the other two.
-    #
-    # It previously did not consult calibrate_splice at all, so under a
-    # `govinfo_only` verdict build_congress_mentions would refuse while this
-    # build ran to completion over the very Gentzkow years mentions had just
-    # declared untrustworthy -- shipping the per-senator CSV on data the
-    # corpus CSV rejected.
-    #
-    # Resolved before any walking, so an unattended run refuses in seconds
-    # rather than after hours. resolve_strategy also applies the C2
-    # completeness gate.
-    strategy, comparison = resolve_strategy(CONGRESS_RAW_GENTZKOW, CONGRESS_RAW_GOVINFO)
-    print(f"calibrate_splice.choose_strategy: {strategy}")
-    if strategy == "govinfo_only":
-        raise RuntimeError(
-            govinfo_only_message(
-                "build_congress_senators",
-                "SENATOR_YEARS begins at 2010, so the entire 2010-2016 half of "
-                "Beat 3's chart comes from the Gentzkow corpus this verdict "
-                "abandons. build_congress_mentions stops on the same verdict; "
-                "the senator chart must not quietly ship instead.",
-            )
-        )
-    if strategy == "scale":
-        raise NotImplementedError(
-            f"calibrate_splice returned 'scale' (factor "
-            f"{comparison['mean_ratio']:.4f}), and whether to apply it to "
-            "per-senator counts is an OPEN DECISION for Heagen -- see I1.\n\n"
-            "SENATOR_YEARS is 2010-2024, so Beat 3 straddles the 2017 splice. "
-            "build_congress_mentions scales its pre-2017 counts by this "
-            "factor. If this build does not, Beat 1's corpus chart and Beat "
-            "3's senator chart disagree about the same years by exactly that "
-            "factor -- one shows a 2017 step the other does not.\n\n"
-            "Scaling here is NOT the automatic answer, which is why this "
-            "raises instead of guessing. Unlike the companions build, where a "
-            "uniform factor cannot reorder a top-ten and scaling is a no-op, "
-            "Beat 3 teaches interns to read the ABSOLUTE distance between a "
-            "senator's line and the Senate average, so the factor is visible "
-            "here. Against that: one china-derived factor would be applied "
-            "uniformly to 100 senators who do not each differ between the "
-            "corpora by the same ratio, and rounding small per-senator counts "
-            "under a factor below 1 collapses them to zero.\n\n"
-            "STOP and get Heagen's decision. Do not remove this guard to make "
-            "a build pass."
-        )
     start_year, end_year = min(SENATOR_YEARS), max(SENATOR_YEARS)
 
-    roster, bio_to_lnf, serving_by_year, roster_skips = govinfo_bioguide_roster(
+    # No splice: the 1994-2016 overlap calibrated to `govinfo_only` on
+    # 2026-07-21, so the Gentzkow half is not read. See twl_common.
+    # GOVINFO_ERA_START. The COVERAGE gate below is unrelated to the splice
+    # and must stay: an interrupted GovInfo pull still yields validator-clean
+    # wrong output.
+    if start_year < GOVINFO_ERA_START:
+        raise CongressDataRefusalError(
+            f"SENATOR_YEARS starts at {start_year}, before GovInfo coverage "
+            f"({GOVINFO_ERA_START}). Pre-{GOVINFO_ERA_START} years need a "
+            f"Gentzkow splice, which was abandoned. Restore the splice or "
+            f"raise the range floor -- do not let these years build empty."
+        )
+
+    usable, bad_years = govinfo_range_usable(CONGRESS_RAW_GOVINFO, start_year, end_year)
+    if not usable:
+        raise CongressDataRefusalError(
+            "Cannot build congress_senators.csv: GovInfo cache incomplete "
+            f"for {start_year}-{end_year}. Missing or short: {bad_years}\n"
+            f"    Cache: {CONGRESS_RAW_GOVINFO}\n"
+            "    Produce it with: python scripts/fetch_congress_govinfo.py "
+            f"--start-year {start_year} --end-year {end_year}"
+        )
+
+    bio_to_lnf, serving_by_year, roster_skips = govinfo_bioguide_roster(
         CONGRESS_RAW_GOVINFO, start_year, end_year
     )
     print(
@@ -732,10 +599,7 @@ def build() -> pd.DataFrame:
     )
 
     govinfo_counts, govinfo_skips, contradictions = govinfo_senator_counts(
-        CONGRESS_RAW_GOVINFO, OVERLAP_END_YEAR + 1, end_year
-    )
-    gentzkow_counts, gentzkow_skips = gentzkow_senator_counts(
-        CONGRESS_RAW_GENTZKOW, start_year, OVERLAP_END_YEAR, roster
+        CONGRESS_RAW_GOVINFO, start_year, end_year
     )
 
     print(
@@ -764,25 +628,9 @@ def build() -> pd.DataFrame:
         print("  examples:")
         for line in contradictions:
             print(f"    {line}")
-    print(
-        "Gentzkow cache skipped: "
-        f"{gentzkow_skips['bad_json']} bad JSON line(s), "
-        f"{gentzkow_skips['bad_date']} bad/missing date(s), "
-        f"{gentzkow_skips['out_of_range']} record(s) outside "
-        f"{start_year}-{OVERLAP_END_YEAR}, "
-        f"{gentzkow_skips['unknown_surname']} unknown surname(s), "
-        f"{gentzkow_skips['ambiguous_surname_no_state']} ambiguous surname(s) "
-        "with no usable state field, "
-        f"{gentzkow_skips['ambiguous_surname_unresolved_state']} ambiguous "
-        "surname(s) whose state did not resolve to exactly one candidate"
-    )
-
-    counts: dict[tuple[str, int], int] = dict(govinfo_counts)
-    for key, n in gentzkow_counts.items():
-        counts[key] = counts.get(key, 0) + n
 
     names = {bio: _display_name(lnf) for bio, lnf in bio_to_lnf.items()}
-    missing_names = sorted({bio for bio, _ in counts if bio not in names})
+    missing_names = sorted({bio for bio, _ in govinfo_counts if bio not in names})
     if missing_names:
         raise ValueError(
             f"counts reference bioguide id(s) with no known display name: "
@@ -790,7 +638,7 @@ def build() -> pd.DataFrame:
             "every bio that can appear here"
         )
 
-    df = build_senators_frame(counts, names, serving_by_year)
+    df = build_senators_frame(govinfo_counts, names, serving_by_year)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     df.to_csv(OUT_PATH, index=False)
     print(f"Wrote {len(df)} rows to {OUT_PATH}")
@@ -798,50 +646,17 @@ def build() -> pd.DataFrame:
 
 
 def main() -> int:
-    missing = []
-    # I6: govinfo_bioguide_roster (and, via it, the I2 serving-by-year proxy)
-    # reads GovInfo congMember metadata across the FULL SENATOR_YEARS span,
-    # not just the post-splice years GovInfo supplies china counts for. The
-    # gate used to check only OVERLAP_END_YEAR+1..max(SENATOR_YEARS)
-    # (2017-2024), so a 2017+-only cache passed while every pre-2017
-    # senator's roster/serving entry was silently absent. Gate on the whole
-    # span the roster walk actually needs, using the shared manifest-based
-    # completeness check (congress_cache.govinfo_range_usable) rather than a
-    # flat day floor -- see that function's docstring for why presence is
-    # not completeness.
-    govinfo_start, govinfo_end = min(SENATOR_YEARS), max(SENATOR_YEARS)
-    usable, bad_years = govinfo_range_usable(
-        CONGRESS_RAW_GOVINFO, govinfo_start, govinfo_end
-    )
-    if not usable:
-        missing.append(
-            f"  - GovInfo cache missing or incomplete for {govinfo_start}-"
-            f"{govinfo_end} (need >= {MIN_REAL_DAYS_PER_YEAR} real cached "
-            f"days per year, verified against each year's fetch manifest; "
-            f"short, absent, or unmanifested: {bad_years}): "
-            f"{CONGRESS_RAW_GOVINFO}\n"
-            "    Produce it with: python scripts/fetch_congress_govinfo.py "
-            f"--start-year {govinfo_start} --end-year {govinfo_end}"
-        )
-    if not CONGRESS_RAW_GENTZKOW.exists() or not any(
-        CONGRESS_RAW_GENTZKOW.glob("speeches_senate_*.jsonl")
-    ):
-        missing.append(
-            f"  - Gentzkow cache missing or empty: {CONGRESS_RAW_GENTZKOW}\n"
-            "    Produce it with: python scripts/fetch_congress_gentzkow.py"
-        )
-    if missing:
-        print(
-            "Cannot build congress_senators.csv: required raw cache(s) are "
-            "absent.\n" + "\n".join(missing) + "\n\n"
-            "These are long-running downloads (the GovInfo pull is roughly "
-            "110k requests; the Gentzkow archive is 11.4 GB) and are not "
-            "run automatically. See the scripts above for what each one "
-            "produces and where."
-        )
+    # build() raises CongressDataRefusalError itself for both refusals (an
+    # incomplete GovInfo cache and a pre-coverage year range) -- so calling
+    # build() directly cannot bypass either gate; see its docstring. Caught
+    # and translated back into a return code here so main()'s own contract --
+    # return 1, never propagate -- matches every other build's main() and
+    # test_build_cache_gates.py's expectations.
+    try:
+        build()
+    except CongressDataRefusalError as exc:
+        print(exc)
         return 1
-
-    build()
     return 0
 
 

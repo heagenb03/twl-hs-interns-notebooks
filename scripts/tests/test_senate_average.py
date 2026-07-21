@@ -1,7 +1,7 @@
 # scripts/tests/test_senate_average.py
 """Tests for I2 (Senate average must include zero-mention serving senators)
-and I6 (main() must gate on GovInfo coverage across the full SENATOR_YEARS
-span, not just the post-splice years).
+and I6 (build()'s coverage gate must cover the full SENATOR_YEARS span, not
+just the post-splice years).
 
 I2, verbatim from the review ledger: govinfo_senator_counts only writes a row
 when a senator's china count is non-zero, so the published "Senate average"
@@ -17,20 +17,27 @@ govinfo_bioguide_roster's docstring for exactly what that proxy misses (a
 senator who served but never surfaced as a SPEAKING congMember on any cached
 day that year is missed, not fabricated).
 
-I6: the old main() gate validated GovInfo coverage only for 2017-2024 (the
+I6: the old gate validated GovInfo coverage only for 2017-2024 (the
 post-splice half), but govinfo_bioguide_roster -- and now the serving-set
 this file's I2 fix depends on -- walks the FULL 2010-2024 SENATOR_YEARS span.
 A 2017+-only cache passed the old gate while every pre-2017 senator's roster
 entry (and now serving flag) silently went missing.
+
+Updated for Task 3b: the 1994-2016 Gentzkow/GovInfo overlap calibrated to
+`govinfo_only` on 2026-07-21 and the splice was abandoned (see twl_common.
+GOVINFO_ERA_START). SENATOR_YEARS is already entirely within GovInfo
+coverage, so build_congress_senators no longer reads the Gentzkow cache at
+all, `govinfo_bioguide_roster` no longer returns a name->bioguide roster (it
+existed only to resolve Gentzkow's name-only records), and the I6 gate lives
+in build() itself (govinfo_range_usable over the whole SENATOR_YEARS span)
+rather than in a separate main()-level check -- the same shape Task 2/3a
+already established for mentions/companions.
 """
 from __future__ import annotations
 
 import json
 
-import pytest
-
 import build_congress_senators
-from calibrate_splice import OverlapIncompleteError
 from build_congress_senators import build_senators_frame, govinfo_bioguide_roster
 from congress_cache import write_manifest
 
@@ -154,9 +161,7 @@ def test_roster_serving_by_year_matches_congmember_presence():
             ),
             encoding="utf-8",
         )
-        roster, bio_to_lnf, serving_by_year, skips = govinfo_bioguide_roster(
-            root, 2020, 2020
-        )
+        bio_to_lnf, serving_by_year, skips = govinfo_bioguide_roster(root, 2020, 2020)
         assert serving_by_year[2020] == {"A001"}
         assert skips == {"bad_json": 0, "phantom_marker": 0}
 
@@ -174,14 +179,12 @@ def test_roster_counts_bad_json_and_phantom_without_crashing():
             json.dumps({"package": "CREC-2020-01-02", "reason": "not found"}),
             encoding="utf-8",
         )
-        roster, bio_to_lnf, serving_by_year, skips = govinfo_bioguide_roster(
-            root, 2020, 2020
-        )
+        bio_to_lnf, serving_by_year, skips = govinfo_bioguide_roster(root, 2020, 2020)
         assert skips == {"bad_json": 1, "phantom_marker": 1}
         assert serving_by_year[2020] == set()
 
 
-# --------------------------------------------------------------- main() gate (I6)
+# --------------------------------------------------------------- coverage gate (I6)
 
 
 def _write_govinfo_year(root, year, n=25):
@@ -221,60 +224,45 @@ def _write_govinfo_year(root, year, n=25):
 
 def test_main_refuses_when_govinfo_cache_does_not_cover_2010_2016(tmp_path, monkeypatch):
     govinfo = tmp_path / "congress_govinfo"
-    gentzkow = tmp_path / "congress_gentzkow"
     govinfo.mkdir()
-    gentzkow.mkdir()
-    (gentzkow / "speeches_senate_100.jsonl").write_text(
-        json.dumps({"date": "20150104", "text": "china trade", "speech_id": "1"})
-        + "\n",
-        encoding="utf-8",
-    )
     # Fully cover only the post-splice years -- the old (I6-buggy) gate only
     # checked 2017-2024, so this exact cache would previously have passed
-    # even though govinfo_bioguide_roster needs 2010-2016 too.
+    # even though govinfo_bioguide_roster (and, now, the china-count walk
+    # itself -- GovInfo alone supplies every year) needs 2010-2016 too.
     for year in range(2017, 2025):
         _write_govinfo_year(govinfo, year)
 
     monkeypatch.setattr(
         build_congress_senators, "CONGRESS_RAW_GOVINFO", govinfo, raising=False
     )
-    monkeypatch.setattr(
-        build_congress_senators, "CONGRESS_RAW_GENTZKOW", gentzkow, raising=False
-    )
 
     assert build_congress_senators.main() == 1
 
 
-def test_main_passes_the_gate_when_the_full_2010_2024_span_is_covered(
+def test_main_succeeds_when_the_full_2010_2024_span_is_covered(
     tmp_path, monkeypatch, capsys
 ):
+    """Task 3b: with the splice gone, a fully-covered 2010-2024 GovInfo cache
+    is now sufficient on its own -- no Gentzkow cache, no overlap calibration.
+    This replaces the old test that asserted main() stopped on
+    OverlapIncompleteError once the I6 cache gate passed; that next gate
+    (calibrate_splice.resolve_strategy) no longer exists in this module at
+    all (see build_congress_senators's module docstring), so the same
+    2010-2024 GovInfo cache that used to only clear the FIRST of two gates
+    now clears the only gate and main() succeeds outright.
+    """
     govinfo = tmp_path / "congress_govinfo"
-    gentzkow = tmp_path / "congress_gentzkow"
     govinfo.mkdir()
-    gentzkow.mkdir()
-    (gentzkow / "speeches_senate_100.jsonl").write_text(
-        json.dumps({"date": "20150104", "text": "china trade", "speech_id": "1"})
-        + "\n",
-        encoding="utf-8",
-    )
     for year in range(2010, 2025):
         _write_govinfo_year(govinfo, year)
 
     monkeypatch.setattr(
         build_congress_senators, "CONGRESS_RAW_GOVINFO", govinfo, raising=False
     )
-    monkeypatch.setattr(
-        build_congress_senators, "CONGRESS_RAW_GENTZKOW", gentzkow, raising=False
-    )
 
     out_path = tmp_path / "congress_senators.csv"
     monkeypatch.setattr(build_congress_senators, "OUT_PATH", out_path, raising=False)
 
-    # The I6 cache gate passes for a 2010-2024 cache. What stops this fixture
-    # now is the NEXT gate: I1 made build() resolve the splice verdict, and
-    # that needs the 1994-2016 overlap, which this fixture does not cover.
-    # Asserting on WHICH gate fires is the point -- a bare "it failed" would
-    # pass even if the I6 fix regressed.
-    with pytest.raises(OverlapIncompleteError):
-        build_congress_senators.main()
+    assert build_congress_senators.main() == 0
+    assert out_path.exists()
     assert "Cannot build congress_senators.csv" not in capsys.readouterr().out
