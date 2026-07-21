@@ -35,8 +35,9 @@ stable ratio and certifies a bogus `scale` join. Only the sitemap knows how
 many days a year should hold, and the manifest is how that number reaches an
 offline build without putting a network call inside it.
 
-It cannot live in build_congress_mentions.py: calibrate_splice would import it
-and build_congress_mentions already imports calibrate_splice.
+It cannot live in build_congress_mentions.py: calibrate_splice imports this
+module, and build_congress_mentions putting the walker there would make
+calibrate_splice depend on the very build it exists to calibrate.
 """
 from __future__ import annotations
 

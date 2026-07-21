@@ -29,6 +29,7 @@ from congress_cache import govinfo_range_usable, iter_govinfo_days
 from congress_tokenize import count_all_terms
 from twl_common import (
     CONGRESS_RAW_GOVINFO,
+    CongressDataRefusalError,
     DATA_DIR,
     GOVINFO_ERA_START,
     MENTIONS_YEARS,
@@ -111,7 +112,9 @@ def govinfo_counts_by_year(
 def build() -> pd.DataFrame:
     """Walk the GovInfo cache and write OUT_PATH. No splice: see module docstring.
 
-    Two gates guard this, and they are not the same gate:
+    Two gates guard this, and they are not the same gate. Both raise
+    CongressDataRefusalError -- one domain exception for "this build must not
+    run against this data" -- rather than two different refusal idioms:
 
       * The floor guard below is static -- it checks MENTIONS_YEARS itself,
         not the cache. It exists so that if MENTIONS_YEARS is ever widened
@@ -123,9 +126,9 @@ def build() -> pd.DataFrame:
         plausible-looking, wrong output. It has to live here in build(), not
         only in main(), so that calling build() directly never bypasses it
         (see test_build_still_refuses_an_incomplete_govinfo_range). main()
-        below catches the SystemExit this raises and turns it back into a
-        return code, so main()'s own contract (return 1, never propagate)
-        is unchanged for callers and for test_build_cache_gates.py.
+        below catches CongressDataRefusalError and turns it into a return
+        code, so main()'s own contract (return 1, never propagate) is
+        unchanged for callers and for test_build_cache_gates.py.
 
     Every skipped day/granule is counted by reason and printed, per this
     project's rule that dropped data must be reported, never silently
@@ -139,7 +142,7 @@ def build() -> pd.DataFrame:
     # and must stay: an interrupted GovInfo pull still yields validator-clean
     # wrong output.
     if start_year < GOVINFO_ERA_START:
-        raise RuntimeError(
+        raise CongressDataRefusalError(
             f"MENTIONS_YEARS starts at {start_year}, before GovInfo coverage "
             f"({GOVINFO_ERA_START}). Pre-{GOVINFO_ERA_START} years need a "
             f"Gentzkow splice, which was abandoned. Restore the splice or "
@@ -148,14 +151,13 @@ def build() -> pd.DataFrame:
 
     usable, bad_years = govinfo_range_usable(CONGRESS_RAW_GOVINFO, start_year, end_year)
     if not usable:
-        print(
+        raise CongressDataRefusalError(
             "Cannot build congress_mentions.csv: GovInfo cache incomplete "
             f"for {start_year}-{end_year}. Missing or short: {bad_years}\n"
             f"    Cache: {CONGRESS_RAW_GOVINFO}\n"
             "    Produce it with: python scripts/fetch_congress_govinfo.py "
             f"--start-year {start_year} --end-year {end_year}"
         )
-        sys.exit(1)
 
     govinfo_counts, govinfo_skips = govinfo_counts_by_year(
         CONGRESS_RAW_GOVINFO, start_year, end_year
@@ -176,15 +178,17 @@ def build() -> pd.DataFrame:
 
 
 def main() -> int:
-    # build() raises SystemExit(1) itself for an incomplete GovInfo cache
-    # (so calling build() directly cannot bypass the coverage gate -- see its
-    # docstring). Caught and translated back into a return code here so
-    # main()'s own contract -- return 1, never propagate -- matches every
-    # other build's main() and test_build_cache_gates.py's expectations.
+    # build() raises CongressDataRefusalError itself for both refusals (an
+    # incomplete GovInfo cache and a pre-coverage year range) -- so calling
+    # build() directly cannot bypass either gate; see its docstring. Caught
+    # and translated back into a return code here so main()'s own contract --
+    # return 1, never propagate -- matches every other build's main() and
+    # test_build_cache_gates.py's expectations.
     try:
         build()
-    except SystemExit as exc:
-        return exc.code if isinstance(exc.code, int) else 1
+    except CongressDataRefusalError as exc:
+        print(exc)
+        return 1
     return 0
 
 
