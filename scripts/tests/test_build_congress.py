@@ -5,17 +5,25 @@ import pytest
 from build_congress_companions import build_companions_frame
 from build_congress_mentions import build_mentions_frame
 from build_congress_senators import build_senators_frame
+from twl_common import MENTIONS_YEARS
 
 
 def _counts() -> dict[int, dict[str, int]]:
+    # MENTIONS_YEARS is GovInfo-only (2010-2024, see twl_common.GOVINFO_ERA_START):
+    # the 1994-2016 Gentzkow overlap calibrated to `govinfo_only` on 2026-07-21 and
+    # the splice was abandoned. Built off MENTIONS_YEARS, not a hardcoded range, so
+    # this fixture cannot go stale again the way it did after Task 1 narrowed it.
     terms = ["china", "climate", "japan", "russia", "taiwan", "tariff", "terrorism", "trade"]
-    return {y: {t: 10 + y % 5 for t in terms} for y in range(1990, 2025)}
+    return {y: {t: 10 + y % 5 for t in terms} for y in MENTIONS_YEARS}
 
 
 def test_frame_is_rectangular_and_sorted():
     df = build_mentions_frame(_counts())
     assert list(df.columns) == ["year", "term", "mentions"]
-    assert len(df) == 280
+    # 15 years (2010-2024) x 8 terms. Literal, not derived from the same
+    # MENTIONS_YEARS the fixture is built from -- otherwise this would pass
+    # trivially regardless of how many rows build_mentions_frame actually emits.
+    assert len(df) == 120
     for term in df.term.unique():
         assert df[df.term == term].year.is_monotonic_increasing
 
@@ -27,15 +35,15 @@ def test_terms_are_lowercase():
 
 def test_missing_year_raises_rather_than_shipping_a_gap():
     counts = _counts()
-    del counts[2001]
-    with pytest.raises(ValueError, match="2001"):
+    del counts[2015]
+    with pytest.raises(ValueError, match="2015"):
         build_mentions_frame(counts)
 
 
 def test_zero_japan_raises():
     # plot_ratio divides by japan; a zero silently yields inf.
     counts = _counts()
-    counts[1999]["japan"] = 0
+    counts[2015]["japan"] = 0
     with pytest.raises(ValueError, match="japan"):
         build_mentions_frame(counts)
 
