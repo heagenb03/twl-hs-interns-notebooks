@@ -62,7 +62,7 @@ def test_uppercase_term_is_caught():
 def test_zero_japan_value_is_caught():
     # plot_ratio returns inf on a zero denominator and .dropna() misses inf.
     m = _good_mentions()
-    m.loc[(m.term == "japan") & (m.year == 1999), "mentions"] = 0
+    m.loc[(m.term == "japan") & (m.year == 2015), "mentions"] = 0
     problems = validate_congress(m, _good_companions(), _good_senators())
     assert any("japan" in p and "zero" in p.lower() for p in problems)
 
@@ -76,25 +76,25 @@ def test_unsorted_years_are_caught():
 
 def test_non_rectangular_mentions_is_caught():
     m = _good_mentions()
-    m = m[~((m.term == "climate") & (m.year == 2001))]
+    m = m[~((m.term == "climate") & (m.year == 2015))]
     problems = validate_congress(m, _good_companions(), _good_senators())
-    assert any("280" in p or "rectangular" in p.lower() for p in problems)
+    assert any("120" in p or "rectangular" in p.lower() for p in problems)
 
 
 def test_era_with_wrong_word_count_is_caught():
     # compare_eras prints "top three" from .head(3) and would silently print
     # fewer than three.
     c = _good_companions()
-    c = c[~((c.era == "1990s") & (c.word == "word9"))]
+    c = c[~((c.era == "2010s") & (c.word == "word9"))]
     problems = validate_congress(_good_mentions(), c, _good_senators())
     assert any("10 words" in p for p in problems)
 
 
 def test_missing_era_is_caught():
     c = _good_companions()
-    c = c[c.era != "2000s"]
+    c = c[c.era != "2020s"]
     problems = validate_congress(_good_mentions(), c, _good_senators())
-    assert any("2000s" in p for p in problems)
+    assert any("2020s" in p for p in problems)
 
 
 def test_duplicate_term_year_is_caught():

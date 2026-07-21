@@ -7,6 +7,7 @@ from twl_common import (
     CONGRESS_ERAS,
     EVENT_DATES,
     EXPECTED_TICKERS,
+    GOVINFO_ERA_START,
     GOVINFO_HTML_URL,
     GOVINFO_MODS_URL,
     MENTIONS_YEARS,
@@ -68,9 +69,26 @@ def test_term_variants_are_compilable_word_boundary_patterns():
 
 
 def test_year_spans_match_the_notebook():
-    assert list(MENTIONS_YEARS) == list(range(1990, 2025))
+    assert list(MENTIONS_YEARS) == list(range(2010, 2025))
     assert list(SENATOR_YEARS) == list(range(2010, 2025))
-    assert CONGRESS_ERAS == ("1990s", "2000s", "2010s", "2020s")
+    assert CONGRESS_ERAS == ("2010s", "2020s")
+
+
+def test_mentions_years_never_predates_govinfo_era():
+    """MENTIONS_YEARS below 2010 would need a Gentzkow splice that no longer exists.
+
+    The builds read GovInfo only. If someone widens this range back into the
+    Gentzkow era without restoring the splice, every pre-2010 year would come
+    back silently empty or truncated -- valid output, plausible values, wrong
+    data, which is this project's signature failure.
+    """
+    assert min(MENTIONS_YEARS) >= GOVINFO_ERA_START
+
+
+def test_eras_match_the_year_range():
+    assert CONGRESS_ERAS == ("2010s", "2020s")
+    assert min(MENTIONS_YEARS) == 2010
+    assert max(MENTIONS_YEARS) == 2024
 
 
 def test_govinfo_urls_use_the_keyless_bulk_paths():

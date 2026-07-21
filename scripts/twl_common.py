@@ -68,8 +68,18 @@ def event_day(index: pd.DatetimeIndex, date: str | pd.Timestamp) -> pd.Timestamp
 
 # ---------------------------------------------------------------- congress
 
-CONGRESS_ERAS: tuple[str, ...] = ("1990s", "2000s", "2010s", "2020s")
-MENTIONS_YEARS: range = range(1990, 2025)
+GOVINFO_ERA_START: int = 2010
+"""First year the GovInfo-only series covers.
+
+The 1994-2016 Gentzkow overlap was calibrated on 2026-07-21 and returned
+`govinfo_only`: GovInfo counts a consistent ~2x Gentzkow because CREC
+interleaves verbatim legislative text with floor speech inside the same
+granule. The splice was abandoned rather than scaled. The series therefore
+starts where continuous GovInfo coverage exists.
+"""
+
+CONGRESS_ERAS: tuple[str, ...] = ("2010s", "2020s")
+MENTIONS_YEARS: range = range(2010, 2025)
 SENATOR_YEARS: range = range(2010, 2025)
 
 # One regex per notebook term. Possessives count ("China's" is a mention of
