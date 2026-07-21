@@ -1,3 +1,4 @@
+# Mirrored by hand in plot_ratio() (notebook cell 6, notebooks/congress_mentions.ipynb) - keep both in sync.
 def durable_crossover(ratio: "pd.Series") -> int | None:
     """First year from which ratio stays above 1 through the end of the series."""
     above = ratio > 1
@@ -23,3 +24,9 @@ def test_durable_crossover_returns_none_if_it_ends_below():
     import pandas as pd
     ratio = pd.Series([2.0, 0.5], index=[2010, 2011])
     assert durable_crossover(ratio) is None
+
+
+def test_durable_crossover_returns_first_year_if_never_below():
+    import pandas as pd
+    ratio = pd.Series([1.5, 2.0, 3.0], index=[2010, 2011, 2012])
+    assert durable_crossover(ratio) == 2010
