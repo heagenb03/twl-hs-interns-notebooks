@@ -2,6 +2,6 @@
 .wolf/
 docs/
 CLAUDE.md
-data/_raw/
+hs-interns/data/_raw/
 __pycache__/
 *.pyc
