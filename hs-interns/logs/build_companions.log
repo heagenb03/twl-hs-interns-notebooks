@@ -1,0 +1,6 @@
+GovInfo cache skipped: 18 phantom marker(s), 0 bad JSON day(s), 0 granule(s) with no text, 0 granule(s) with a year outside CONGRESS_ERAS, 264080 segment(s) with no china mention
+GovInfo segmentation: 81645 granule(s) had no speaker headers and were used whole, 67524 pre-header head block(s) dropped carrying 708 china mention(s)
+era '2010s': 4676 china-bearing segment(s)
+era '2020s': 4087 china-bearing segment(s)
+Wrote 20 rows to C:\Users\heage\OneDrive\Research\TWL\highschool_intern\twl-hs-interns-notebooks\data\congress_companions.csv
+EXIT=0

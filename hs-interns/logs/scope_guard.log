@@ -1,0 +1,46 @@
+  2010:   9833 granules,  138 fail,    0 china at risk
+  2011:  10177 granules,   71 fail,   14 china at risk
+  2012:   8596 granules,   54 fail,    0 china at risk
+  2013:   9972 granules,   59 fail,    0 china at risk
+  2014:   8997 granules,   31 fail,   23 china at risk
+  2015:  11049 granules,   34 fail,    0 china at risk
+  2016:   8702 granules,   33 fail,    0 china at risk
+  2017:  10471 granules,   57 fail,    0 china at risk
+  2018:  10792 granules,   65 fail,   12 china at risk
+  2019:  10491 granules,   45 fail,    0 china at risk
+  2020:   8920 granules,   70 fail,   18 china at risk
+  2021:  13462 granules,   69 fail,    0 china at risk
+  2022:   9746 granules,   28 fail,    0 china at risk
+  2023:   8855 granules,   40 fail,    0 china at risk
+  2024:   9106 granules,   22 fail,    0 china at risk
+
+====================================================================
+granules processed      : 149169
+guard failures          : 816  (0.547%)
+  unaccounted           : 595
+    - lost NO china     : 592
+    - lost real china   : 3
+  unresolved            : 221
+  other                 : 0
+
+china in failing granules : 1293
+  attributable anyway     : 1226
+  AT RISK (nobody gets it): 67
+    in unresolved segs    : 48
+    in orphan head block  : 19
+
+skipped: 0 bad json, 18 phantom
+====================================================================
+
+[unaccounted]
+  CREC-2010-01-22.json :: at_risk=0 total=3 :: unaccounted role=SPEAKING member(s): L000572; headers found: ['BAUCUS', 'BROWNBACK', 'DORGAN', 'KLOBUCHAR', 'LEAHY', 'MERKLEY', 'NELSON', 'REID', 'WHI
+  CREC-2010-01-28.json :: at_risk=0 total=0 :: unaccounted role=SPEAKING member(s): D000595; headers found: ['AKAKA', 'BOXER', 'BROWNBACK', 'CONRAD', 'CORNYN', 'DODD', 'DURBIN', 'FEINGOLD', 'FEINST
+  CREC-2010-02-02.json :: at_risk=0 total=0 :: unaccounted role=SPEAKING member(s): G000359; headers found: ['CHAMBLISS', 'LEAHY', 'LEVIN', 'SNOWE', 'WYDEN']
+  CREC-2010-02-02.json :: at_risk=0 total=0 :: unaccounted role=SPEAKING member(s): G000359; headers found: ['CHAMBLISS', 'WYDEN']
+
+[unresolved]
+  CREC-2010-01-26.json :: at_risk=0 total=4 :: unresolved speaker header(s): BROWN; their text would be dropped. Known speaking surnames: ['', 'BAUCUS', 'BEGICH', 'BENNET', 'CONRAD', 'DURBIN', 'GRE
+  CREC-2010-01-26.json :: at_risk=0 total=0 :: unresolved speaker header(s): BROWN; their text would be dropped. Known speaking surnames: ['']
+  CREC-2010-02-01.json :: at_risk=0 total=0 :: unresolved speaker header(s): BROWN; their text would be dropped. Known speaking surnames: ['', 'ENZI', 'FRANKEN', 'HARKIN', 'ISAKSON', 'KYL', 'LEAHY'
+  CREC-2010-03-24.json :: at_risk=0 total=0 :: unresolved speaker header(s): SHAHEEN; their text would be dropped. Known speaking surnames: ['AKAKA', 'FEINGOLD', 'SHAHEEN', 'SPECTER']
+EXIT=0
