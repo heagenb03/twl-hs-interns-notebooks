@@ -27,10 +27,8 @@ All notebooks read data from `raw.githubusercontent.com` URLs regardless of wher
 notebook file itself lives (GitHub master vs. named Drive copies).
 
 ## TODOs before freeze, in order
-1. **Set the URL placeholder** — three of four are done and point at
-   `heagenb03/twl-hs-interns-notebooks`. **`bill_classifier.ipynb` is still
-   unset**: it reads `YOUR-ORG/trade-war-lab-notebooks`, so both the org *and*
-   the repo name are wrong. It will 404 on load until fixed.
+1. ~~**Set the URL placeholder**~~ — done. All four notebooks read from
+   `heagenb03/twl-hs-interns-notebooks/main/hs-interns/data`.
 2. **One full Colab run per notebook.** Non-negotiable for async. While you're in
    there:
    - Bill classifier: replace all 7 "What you should see" numbers with actual outputs;
