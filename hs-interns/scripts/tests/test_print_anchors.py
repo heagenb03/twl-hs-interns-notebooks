@@ -130,12 +130,13 @@ def test_congress_anchors_on_real_data_has_expected_keys() -> None:
     """
     anchors = print_anchors.congress_anchors()
 
+    # CONGRESS_ERAS narrowed to ("2010s", "2020s") -- see twl_common.CONGRESS_ERAS.
+    # print_anchors.congress_anchors() derives its era loop from CONGRESS_ERAS,
+    # so no 1990s/2000s keys are emitted anymore.
     expected_keys = {
         "setup/counts",
         "setup/terms",
         "beat1/china_series",
-        "beat2/1990s_top_three",
-        "beat2/2000s_top_three",
         "beat2/2010s_top_three",
         "beat2/2020s_top_three",
         "beat3/leaderboard_2024_top5",

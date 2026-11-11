@@ -92,6 +92,13 @@ def read_pipe_table(
     Raises ValueError naming `source` and the missing column(s) if the
     header lacks any column in `required_columns`.
     """
+    # csv caps a single field at 128 KB by default, and a real Senate speech
+    # exceeds that -- verified against the actual archive, where congress 114
+    # raised `_csv.Error: field larger than field limit (131072)` on the first
+    # read. Long floor speeches and inserted documents (bill text, letters,
+    # hearing transcripts) routinely run past it. The failure is loud, but it
+    # arrives only when the 11.4 GB archive is finally on disk, which is why it
+    # survived every earlier test: nothing before this had ever opened it.
     text = decode_archive_bytes(handle.read()).splitlines()
     # QUOTE_NONE: the hein-daily format is plain pipe-delimited with no
     # csv-style quoting. Speech text is full of literal '"' characters
@@ -100,6 +107,7 @@ def read_pipe_table(
     # quote, consuming following lines into one field - silently merging
     # rows and corrupting the speech_id join. QUOTE_NONE makes '|' the only
     # delimiter that matters and '"' just another character.
+    _raise_csv_field_limit()
     reader = csv.DictReader(text, delimiter="|", quoting=csv.QUOTE_NONE)
     fieldnames = list(reader.fieldnames or [])
     missing = [c for c in required_columns if c not in fieldnames]
@@ -109,6 +117,22 @@ def read_pipe_table(
             f"columns found: {fieldnames}"
         )
     return list(reader)
+
+
+def _raise_csv_field_limit() -> None:
+    """Lift csv's per-field cap as far as this platform allows.
+
+    sys.maxsize overflows the C long that csv uses on Windows, so the standard
+    approach is to halve until it is accepted. Idempotent: safe to call per
+    table read.
+    """
+    limit = sys.maxsize
+    while True:
+        try:
+            csv.field_size_limit(limit)
+            return
+        except OverflowError:
+            limit //= 2
 
 
 def find_congress_files(

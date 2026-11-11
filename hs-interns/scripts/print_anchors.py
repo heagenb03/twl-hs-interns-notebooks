@@ -25,7 +25,7 @@ import sys
 
 import pandas as pd
 
-from twl_common import DATA_DIR, EVENT_DATES, EXPECTED_TICKERS, event_day
+from twl_common import CONGRESS_ERAS, DATA_DIR, EVENT_DATES, EXPECTED_TICKERS, event_day
 
 
 def day_zero_move(prices: pd.DataFrame, ticker: str, date: str) -> float:
@@ -107,7 +107,7 @@ def congress_anchors() -> dict[str, str]:
         f"{china.mentions.iloc[-1]} in {china.year.iloc[-1]} "
         f"(peak: {china.mentions.max()} in {china.loc[china.mentions.idxmax(), 'year']})"
     )
-    for era in ("1990s", "2000s", "2010s", "2020s"):
+    for era in CONGRESS_ERAS:
         top3 = (
             companions[companions.era == era]
             .sort_values("count", ascending=False)

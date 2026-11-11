@@ -35,14 +35,15 @@ stable ratio and certifies a bogus `scale` join. Only the sitemap knows how
 many days a year should hold, and the manifest is how that number reaches an
 offline build without putting a network call inside it.
 
-It cannot live in build_congress_mentions.py: calibrate_splice would import it
-and build_congress_mentions already imports calibrate_splice.
+It cannot live in build_congress_mentions.py: calibrate_splice imports this
+module, and build_congress_mentions putting the walker there would make
+calibrate_splice depend on the very build it exists to calibrate.
 """
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Iterator, NamedTuple
+from typing import Iterable, Iterator, NamedTuple
 
 MIN_REAL_DAYS_PER_YEAR = 20
 """Floor for calling a cached year usable.
@@ -263,6 +264,26 @@ def coverage_report(
             phantom=phantom[year],
         )
     return report
+
+
+def govinfo_years_usable(
+    raw_dir: Path, years: Iterable[int]
+) -> tuple[bool, list[int]]:
+    """Same check as govinfo_range_usable, over an explicit, possibly sparse set.
+
+    The splice calibration does not need every year of the overlap -- pulling
+    1994-2016 in full costs ~32 hours and none of it reaches a published CSV.
+    It samples instead (see calibrate_splice.CALIBRATION_YEARS), so its gate
+    has to ask about a set of years rather than a contiguous span. Years NOT in
+    the set are not checked and their absence is not a failure; every year that
+    IS in the set must be fully covered, exactly as in the contiguous case.
+    """
+    years = sorted(set(years))
+    if not years:
+        return True, []
+    report = coverage_report(raw_dir, min(years), max(years))
+    bad_years = [y for y in years if not report[y].complete]
+    return not bad_years, bad_years
 
 
 def govinfo_range_usable(

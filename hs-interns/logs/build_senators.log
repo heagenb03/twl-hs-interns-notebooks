@@ -1,0 +1,33 @@
+GovInfo roster: 258 bioguide id(s) harvested from congMember metadata
+GovInfo roster walk skipped: 0 bad JSON day(s), 18 phantom marker(s)
+Traceback (most recent call last):
+  File "C:\Users\heage\OneDrive\Research\TWL\highschool_intern\twl-hs-interns-notebooks\scripts\build_congress_senators.py", line 477, in govinfo_senator_counts
+    attributed = attribute_granule(text, members, carry_in)
+  File "C:\Users\heage\OneDrive\Research\TWL\highschool_intern\twl-hs-interns-notebooks\scripts\congress_speakers.py", line 271, in attribute_granule
+    raise ValueError(
+    ...<2 lines>...
+    )
+ValueError: unaccounted role=SPEAKING member(s): L000572; headers found: ['BAUCUS', 'BROWNBACK', 'DORGAN', 'KLOBUCHAR', 'LEAHY', 'MERKLEY', 'NELSON', 'REID', 'WHITEHOUSE']
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\heage\OneDrive\Research\TWL\highschool_intern\twl-hs-interns-notebooks\scripts\build_congress_senators.py", line 664, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "C:\Users\heage\OneDrive\Research\TWL\highschool_intern\twl-hs-interns-notebooks\scripts\build_congress_senators.py", line 656, in main
+    build()
+    ~~~~~^^
+  File "C:\Users\heage\OneDrive\Research\TWL\highschool_intern\twl-hs-interns-notebooks\scripts\build_congress_senators.py", line 601, in build
+    govinfo_counts, govinfo_skips, contradictions = govinfo_senator_counts(
+                                                    ~~~~~~~~~~~~~~~~~~~~~~^
+        CONGRESS_RAW_GOVINFO, start_year, end_year
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\heage\OneDrive\Research\TWL\highschool_intern\twl-hs-interns-notebooks\scripts\build_congress_senators.py", line 479, in govinfo_senator_counts
+    raise ValueError(
+    ...<2 lines>...
+    ) from exc
+ValueError: CREC-2010-01-22 granule CREC-2010-01-22-pt1-PgS135-7 (2010): unaccounted role=SPEAKING member(s): L000572; headers found: ['BAUCUS', 'BROWNBACK', 'DORGAN', 'KLOBUCHAR', 'LEAHY', 'MERKLEY', 'NELSON', 'REID', 'WHITEHOUSE']
+EXIT=1

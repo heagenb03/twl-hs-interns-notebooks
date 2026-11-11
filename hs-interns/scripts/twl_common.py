@@ -68,8 +68,39 @@ def event_day(index: pd.DatetimeIndex, date: str | pd.Timestamp) -> pd.Timestamp
 
 # ---------------------------------------------------------------- congress
 
-CONGRESS_ERAS: tuple[str, ...] = ("1990s", "2000s", "2010s", "2020s")
-MENTIONS_YEARS: range = range(1990, 2025)
+GOVINFO_ERA_START: int = 2010
+"""First year the GovInfo-only series covers.
+
+The 1994-2016 Gentzkow overlap was calibrated on 2026-07-21 and returned
+`govinfo_only`: GovInfo counts a consistent ~2x Gentzkow because CREC
+interleaves verbatim legislative text with floor speech inside the same
+granule. The splice was abandoned rather than scaled. The series therefore
+starts where continuous GovInfo coverage exists.
+"""
+
+
+class CongressDataRefusalError(RuntimeError):
+    """Raised when a congress build must refuse to run against its data.
+
+    Covers two refusals that are really one concept: a build may not proceed
+    either because the requested year range predates GovInfo coverage (the
+    static floor guard) or because the GovInfo cache for the requested range
+    is incomplete (the coverage gate) -- an interrupted fetch still produces
+    validator-clean, wrong output either way. `build()` raises this; `main()`
+    catches it, prints the message, and returns 1, so it never escapes as a
+    live process the way `SystemExit` (a `BaseException`) would for a caller
+    that only catches `Exception` -- a notebook, or a future script.
+
+    Subclasses RuntimeError, following calibrate_splice.OverlapIncompleteError's
+    precedent, so pre-existing tests that expect a plain RuntimeError still
+    pass. Defined here, not in build_congress_mentions, because Task 3 reuses
+    it for the companions and senators builds; all three already import from
+    this module.
+    """
+
+
+CONGRESS_ERAS: tuple[str, ...] = ("2010s", "2020s")
+MENTIONS_YEARS: range = range(2010, 2025)
 SENATOR_YEARS: range = range(2010, 2025)
 
 # One regex per notebook term. Possessives count ("China's" is a mention of
