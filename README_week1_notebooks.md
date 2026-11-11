@@ -4,7 +4,7 @@
 | Notebook | Data files | Pip installs in Colab | Anchor numbers |
 |---|---|---|---|
 | `bill_classifier.ipynb` | `bills_china.csv` | sentence-transformers | **Estimates, needs recapture** |
-| `congress_mentions.ipynb` | `congress_mentions.csv`, `congress_companions.csv`, `congress_senators.csv` | none | **Real** (deterministic data) |
+| `congress_mentions.ipynb` | `congress_mentions.csv`, `congress_companions.csv`, `congress_senators.csv` | none | Beat 1 + Crossover: **real** (GovInfo CREC, 2010–2024). Beat 2/3: **still synthetic** |
 | `tariff_event_study.ipynb` | `tariff_prices.csv` | none | **Real** (actual market data) |
 | `media_framing.ipynb` | `headlines.csv` | sentence-transformers, vaderSentiment | Beat 1 sentiment: **real**. Beat 2/3 classifier: **estimates, needs recapture** |
 
@@ -27,8 +27,10 @@ All notebooks read data from `raw.githubusercontent.com` URLs regardless of wher
 notebook file itself lives (GitHub master vs. named Drive copies).
 
 ## TODOs before freeze, in order
-1. **Set the URL placeholder** — search all four notebooks for `YOUR-ORG` (one
-   occurrence each) and point at the real repo path.
+1. **Set the URL placeholder** — three of four are done and point at
+   `heagenb03/twl-hs-interns-notebooks`. **`bill_classifier.ipynb` is still
+   unset**: it reads `YOUR-ORG/trade-war-lab-notebooks`, so both the org *and*
+   the repo name are wrong. It will 404 on load until fixed.
 2. **One full Colab run per notebook.** Non-negotiable for async. While you're in
    there:
    - Bill classifier: replace all 7 "What you should see" numbers with actual outputs;
@@ -37,17 +39,30 @@ notebook file itself lives (GitHub master vs. named Drive copies).
      that `guess_outlet` on the starting WSJ-style headline actually leads WSJ. If the
      4-class classifier lands below ~55% with real embeddings, tell me — the fix is more
      headlines per outlet, and I can extend the generator.
-   - Congress + tariff: anchors are captured from the actual data and should match as-is;
+   - Tariff: anchors are captured from the actual data and should match as-is;
      just eyeball the charts.
+   - Congress: Beat 1 and the Crossover anchors are captured from the real CSV and
+     verified (china 1615 in 2010 → 2950 in 2024, peak 7661 in 2021; taiwan 129 →
+     3729; china/terrorism dips below 1 in 2013, 2015, 2016 and never after).
+     Beat 2 and Beat 3 still read synthetic CSVs — see item 4.
 3. **Named Drive copies** after form results: copy each intern's assigned notebook into
    the shared folder, rename with their name, share per-file (not folder-level).
 4. **Real data swaps** (all optional for launch; schemas documented in each `make_data_*.py`):
    - `bills_china.csv` — real bill snippets when ready.
-   - Congress CSVs — currently synthetic with plausible shapes (PNTR bump, post-2017
-     surge, early-90s Japan, 2022 Russia). Real counts need your Congressional Record
-     pull. **Per-senator counts are synthetic numbers attached to real names** — the
-     names and general pattern match the public record of who leads on China rhetoric,
-     but replace with real counts before anything leaves the program context.
+   - Congress CSVs — **one of three done (2026-07-21).**
+     - `congress_mentions.csv` — **real.** Rebuilt from a 3,536-day GovInfo CREC
+       pull, Senate granules, 2010–2024, 120 rows. The series was narrowed from
+       1990–2024 because the Gentzkow splice calibrated to `govinfo_only`; that
+       drops the early-90s Japan beat and the 2000 PNTR bump entirely. See
+       `data/PROVENANCE.md`.
+     - `congress_companions.csv` — **still synthetic.** The real build runs but
+       returns legislative boilerplate (`shall, section, under…`), because CREC
+       interleaves verbatim bill text with speech inside a single granule. A
+       working build needs intra-granule segmentation of spoken turns; three
+       granule-level filters were measured and all failed.
+     - `congress_senators.csv` — **still synthetic.** Real names, invented counts.
+       The real build aborts on an attribution guard that fires on 0.55% of
+       granules. Do not ship these numbers outside the program context.
    - `tariff_prices.csv` — **done (2026-07-19).** Swapped for real Yahoo Finance
      closes via `yfinance`, frozen to CSV: 879 trading days, 2017-01-03 to
      2020-06-30. The six dates and event labels were already real and are
@@ -73,9 +88,12 @@ status above predates that swap.
 - Media Beat 1 "Things to try" deliberately walks interns into VADER's failure on the
   Hong Kong event ("freedom"/"security"/"stability" score positive in crackdown
   headlines) as the motivation for the embedding classifier in Beat 2.
-- Congress notebook includes the 2000 PNTR bump in the synthetic data so Beat 1 has
-  two stories (2000 bump + 2017 surge), and the Japan early-90s arc as the comparison
-  that raises the "will China's line ever fade?" question.
+- Congress notebook originally included the 2000 PNTR bump in the synthetic data so
+  Beat 1 had two stories (2000 bump + 2017 surge), plus the Japan early-90s arc as
+  the comparison that raised the "will China's line ever fade?" question. **Both are
+  gone** — real data starts at 2010. The "will it fade?" question is now carried by
+  `terrorism`, which outranked china in 2013/2015/2016 and then fell away, and by
+  china's own fall from 7661 in 2021 to 2950 in 2024.
 - Tariff Beat 3 (Phase One flatline vs. Sunday-tweet cliff) is the notebook's real
   wow — "priced in" lands harder than the speed beat, which is why it comes last.
 - Media stretch is a held-out-event test (style vs. vocabulary memorization) — the

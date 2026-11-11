@@ -5,3 +5,13 @@ CLAUDE.md
 data/_raw/
 __pycache__/
 *.pyc
+
+# Video assets: NotebookIntro.mp4 is 347 MB, over GitHub's 100 MB hard limit.
+# Host it externally and link it from the notebook's Step 1 cell.
+*.mp4
+.ipynb_checkpoints/
+em_dash_report.txt
+
+# NOTE: logs/ is deliberately NOT ignored. data/PROVENANCE.md cites
+# logs/build_companions.log and logs/build_senators.log as the evidence that the
+# companions and senators builds failed against real data. Commit them.

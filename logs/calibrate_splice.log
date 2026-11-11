@@ -1,0 +1,21 @@
+Counting 'china' mentions per year, 1994-2016...
+GovInfo cache skipped: 4 phantom_marker
+  year    gentzkow     govinfo     ratio
+  1994        1274        2720     2.135
+  1998        2131        4233     1.986
+  2002         552        1146     2.076
+  2006         740        1272     1.719
+  2010         980        1615     1.648
+  2011        1793        2926     1.632
+  2012         671        1325     1.975
+  2013         422         935     2.216
+  2014         502        1261     2.512
+  2015         977        1574     1.611
+  2016         401         914     2.279
+
+mean_rel_diff: 0.9808
+mean_ratio:    1.9808
+cv:            0.1442
+STRATEGY:      govinfo_only
+
+govinfo_only means the splice is abandoned: 1990-1993 is dropped, the mentions build's year range changes, and the Japan beat must be re-anchored to the 1994-2000 decline. STOP and tell Heagen before continuing.
